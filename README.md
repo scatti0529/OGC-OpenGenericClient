@@ -1,6 +1,6 @@
 # OGC - Open Generic Client
 
-> 个人脑子一热的产物，练手之作 🧑💻
+> 练手之作 🧑💻
 
 一个基于 **PyQt5 + PyQt-Fluent-Widgets** 的现代化桌面客户端，集成多平台媒体下载、音乐播放、用户管理与权限控制等功能。
 
