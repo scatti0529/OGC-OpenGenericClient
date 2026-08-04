@@ -1,2 +1,2 @@
-# OGC-Open-Generic-Client-
+# OGC-OpenGenericClient
 个人脑子一热的产物，练手之作
