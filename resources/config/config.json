@@ -1,0 +1,31 @@
+{
+    "Material": {
+        "AcrylicBlurRadius": 0,
+        "GlassBlurRadius": 26,
+        "GlassOpacity": 250
+    },
+    "Update": {
+        "CheckUpdateAtStartUp": false
+    },
+    "Folders": {
+        "Download": "E:/项目程序/PY项目/测试下载",
+        "LocalMusic": [
+            "E:/项目程序/PY项目/测试程序/OGC初版/data/musics"
+        ]
+    },
+    "MainWindow": {
+        "DpiScale": "Auto",
+        "Language": "zh_CN",
+        "MicaEnabled": false,
+        "SplashEnabled": true
+    },
+    "QFluentWidgets": {
+        "FontFamilies": [
+            "Segoe UI",
+            "Microsoft YaHei",
+            "PingFang SC"
+        ],
+        "ThemeColor": "#ff28afe9",
+        "ThemeMode": "Light"
+    }
+}
