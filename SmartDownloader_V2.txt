@@ -1,0 +1,568 @@
+import sqlite3
+import os
+import requests
+import threading
+import time
+from tqdm import tqdm
+import csv
+import shutil
+import tkinter.ttk as ttk
+from tkinter import filedialog
+from datetime import datetime
+import customtkinter as ctk
+import random
+
+class SmartDownloader:
+    def __init__(self, url, filename, download_path, num_threads=4):
+        self.url = url
+        self.filename = filename
+        self.download_path = download_path
+        self.num_threads = num_threads
+        self.file_path = os.path.join(download_path, filename)
+        self.total_size = 0
+        self.supports_partial = False
+        self.downloaded = 0
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.chunk_ranges = []
+        self.progress_callback = None
+
+    def _get_file_info(self):
+        try:
+            # 尝试HEAD请求获取元数据
+            response = requests.head(self.url, allow_redirects=True, timeout=10)
+            if 200 <= response.status_code < 300:
+                self.supports_partial = response.headers.get('Accept-Ranges', '').lower() == 'bytes'
+                if content_length := response.headers.get('Content-Length'):
+                    self.total_size = int(content_length)
+                    return True
+
+            # 尝试Range请求验证分块支持
+            headers = {'Range': 'bytes=0-0'}
+            response = requests.get(self.url, headers=headers, stream=True, timeout=10)
+            if response.status_code == 206:
+                if content_range := response.headers.get('Content-Range'):
+                    self.total_size = int(content_range.split('/')[-1])
+                    self.supports_partial = True
+                    return True
+
+            # 最终尝试GET请求
+            response = requests.get(self.url, stream=True, timeout=10)
+            if response.status_code == 200:
+                if content_length := response.headers.get('Content-Length'):
+                    self.total_size = int(content_length)
+                return True
+            return False
+        except Exception as e:
+            print(f"获取文件信息失败: {str(e)}")
+            return False
+
+    def _calculate_chunks(self):
+        chunk_size = self.total_size // self.num_threads
+        self.chunk_ranges = []
+        for i in range(self.num_threads):
+            start = i * chunk_size
+            end = start + chunk_size - 1 if i < self.num_threads - 1 else self.total_size - 1
+            self.chunk_ranges.append((start, end))
+
+    def _download_chunk(self, start, end, chunk_index):
+        if self.stop_event.is_set():
+            return
+
+        try:
+            headers = {'Range': f'bytes={start}-{end}'}
+            response = requests.get(self.url, headers=headers, stream=True, timeout=10)
+            if response.status_code != 206:
+                self.stop_event.set()
+                return
+
+            downloaded = 0
+            with open(self.file_path, 'r+b') as f:
+                f.seek(start)
+                for chunk in response.iter_content(chunk_size=10240):
+                    if self.stop_event.is_set() or not chunk:
+                        break
+                    f.write(chunk)
+                    with self.lock:
+                        self.downloaded += len(chunk)
+                        if self.progress_callback:
+                            self.progress_callback(self.downloaded, self.total_size)
+        except Exception as e:
+            print(f"分块 {chunk_index} 下载失败: {str(e)}")
+            self.stop_event.set()
+
+
+    def get_file_info(self):
+        """返回下载文件信息"""
+        return {
+            "filename": self.filename,
+            "total_size": self.total_size,
+            "file_path": self.file_path
+        }
+
+    def _direct_download(self):
+        try:
+            response = requests.get(self.url, stream=True, timeout=10)
+            response.raise_for_status()
+            with open(self.file_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=10240):
+                    if self.stop_event.is_set():
+                        break
+                    if chunk:
+                        f.write(chunk)
+                        with self.lock:
+                            self.downloaded += len(chunk)
+                            if self.progress_callback:
+                                self.progress_callback(self.downloaded, self.total_size)
+        except Exception as e:
+            print(f"直接下载失败: {str(e)}")
+            raise
+
+    def download(self):
+        # 创建下载目录
+        os.makedirs(self.download_path, exist_ok=True)
+
+        if not self._get_file_info():
+            print("无法获取文件信息，开始直接下载...")
+            self._direct_download()
+            return True
+
+        try:
+            if self.supports_partial and self.total_size:
+                print("启动多线程分块下载...")
+                # 初始化文件
+                with open(self.file_path, 'wb') as f:
+                    f.truncate(self.total_size)
+
+                self._calculate_chunks()
+                threads = []
+                for i in range(self.num_threads):
+                    t = threading.Thread(
+                        target=self._download_chunk,
+                        args=(*self.chunk_ranges[i], i)
+                    )
+                    threads.append(t)
+                    t.start()
+
+                # 显示进度条
+                with tqdm(total=self.total_size, unit='B', unit_scale=True) as pbar:
+                    while any(t.is_alive() for t in threads):
+                        pbar.n = self.downloaded
+                        pbar.refresh()
+                        time.sleep(0.1)
+                        if self.stop_event.is_set():
+                            break
+
+                if self.stop_event.is_set():
+                    print("\n分块下载失败，切换到直接下载...")
+                    os.remove(self.file_path)
+                    self._direct_download()
+            else:
+                print("服务器不支持分块下载，开始直接下载...")
+                self._direct_download()
+
+            return True
+        except Exception as e:
+            print(f"下载过程中发生错误: {str(e)}")
+            return False
+
+class DownloaderApp(ctk.CTkFrame):
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self._create_widgets()
+        self.download_thread = None
+        self.running = False
+        self.db_file = "database.db"
+        self._init_db()
+        
+        
+    def _create_widgets(self):
+
+        # 顶部菜单栏
+        self.menu_frame = ctk.CTkFrame(self, height=40)
+        self.menu_frame.grid(row=0, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+        
+        self.history_btn = ctk.CTkButton(self.menu_frame, text="📜 下载历史", 
+                                      command=self._show_history, width=120)
+        self.history_btn.pack(side="left", padx=5)
+        
+        self.stats_btn = ctk.CTkButton(self.menu_frame, text="📊 统计信息", 
+                                     command=self._show_stats, width=120)
+        self.stats_btn.pack(side="left", padx=5)
+        
+        self.export_btn = ctk.CTkButton(self.menu_frame, text="💾 导出历史", 
+                                      command=self._export_history, width=120)
+        self.export_btn.pack(side="left", padx=5)
+
+        # 链接输入部分
+        ctk.CTkLabel(self, text="下载链接:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        self.url_entry = ctk.CTkEntry(self, width=500)
+        self.url_entry.grid(row=1, column=1, columnspan=3, padx=10, pady=5, sticky="ew")
+
+        # 线程数选择
+        ctk.CTkLabel(self, text="线程数:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        self.thread_combo = ctk.CTkComboBox(self, values=[str(i) for i in range(1, 9)])
+        self.thread_combo.set("4")
+        self.thread_combo.grid(row=2, column=1, padx=10, pady=5, sticky="w")
+
+        # 文件名称
+        ctk.CTkLabel(self, text="文件类型:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        self.filename_combo = ctk.CTkComboBox(self, values=['video', 'music', 'image', '随机', 'other'])
+        self.filename_combo.set("随机")
+        self.filename_combo.grid(row=2, column=2, padx=10, pady=5, sticky="w")
+
+        # 文件类型
+        ctk.CTkLabel(self, text="文件类型:").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        self.filename_type = ctk.CTkComboBox(self, values=['.mp4', '.mp3', '.jpg', '.png', '.txt', '.bak', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.zip', '.rar', '.7z', '.tar', '.exe', '.apk', '.bin', '.csv', '.xml', '.json', '.html', '.css', '.js', '.php', '.py', '.java', '.c', '.cpp', '.h', '.hpp', '.rb', '.swift', '.go', '.rs', '.kt', '.scala', '.pl', '.sh', '.bat', '.cmd', '.ps1', '.vbs', '.lua', '.sql', '.m', '.mm', '.swift', '.rs', '.kt', '.scala', '.pl'])
+        self.filename_type.set(".bak")
+        self.filename_type.grid(row=2, column=3, padx=10, pady=5, sticky="w")
+
+        # 保存路径选择
+        self.path_label = ctk.CTkLabel(self, text="未选择保存路径")
+        self.path_label.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+        self.path_button = ctk.CTkButton(self, text="选择保存路径", command=self._select_path)
+        self.path_button.grid(row=3, column=3, padx=10, pady=5)
+
+        # 进度条
+        self.progressbar = ctk.CTkProgressBar(self)
+        self.progressbar.grid(row=4, column=0, columnspan=4, padx=10, pady=10, sticky="ew")
+        self.progressbar.set(0)
+
+        # 状态显示
+        self.status_label = ctk.CTkLabel(self, text="准备就绪")
+        self.status_label.grid(row=5, column=0, columnspan=4, padx=10, pady=5, sticky="w")
+
+        # 日志显示
+        self.log_text = ctk.CTkTextbox(self, height=200)
+        self.log_text.grid(row=6, column=0, columnspan=4, padx=10, pady=10, sticky="nsew")
+        self.log_text.configure(state="disabled")
+
+        # 开始按钮
+        self.start_button = ctk.CTkButton(self, text="开始下载", command=self._start_download)
+        self.start_button.grid(row=7, column=3, padx=10, pady=10, sticky="e")
+
+        # 配置网格布局权重
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(6, weight=1)
+
+    def _init_db(self):
+        """初始化SQLite数据库"""
+        self.conn = sqlite3.connect(self.db_file)
+        self.cursor = self.conn.cursor()
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS downloads
+                            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                             timestamp TEXT NOT NULL,
+                             filename TEXT NOT NULL,
+                             filetype TEXT NOT NULL,
+                             filesize INTEGER NOT NULL,
+                             url TEXT NOT NULL,
+                             save_path TEXT NOT NULL)''')
+        self.conn.commit()
+        
+    
+    def _log_message(self, message):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", f"[{timestamp}] {message}\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _update_progress(self, value):
+        self.progressbar.set(value)
+
+    def _update_status(self, text):
+        self.status_label.configure(text=text)
+
+    def _download_complete(self, success):
+        self.running = False
+        self.start_button.configure(text="开始下载")
+
+        if success:
+        # 获取文件实际大小
+            try:
+                file_path = os.path.join(self.download_path, self.downloader.filename)
+                actual_size = os.path.getsize(file_path)
+            except Exception as e:
+                actual_size = 0
+            
+            # 保存历史记录
+            self._save_history(
+                filename=self.downloader.filename,
+                filesize=actual_size,
+                url=self.downloader.url
+            )
+            self._update_status("下载完成")
+            self._log_message("下载成功完成！")
+        else:
+            self._update_status("下载失败")
+            self._log_message("下载过程中发生错误")
+
+    def _start_download(self):
+        self.filename_type = str(self.filename_type.get())
+        self.filename_combo = str(self.filename_combo.get())
+
+        if self.running:
+            return
+
+        url = self.url_entry.get()
+        if not url.startswith("http"):
+            self._log_message("错误：无效的URL格式")
+            return
+
+        if not hasattr(self, 'download_path'):
+            self._log_message("错误：请先选择保存路径")
+            return
+        
+        if not hasattr(self, 'filename_type'):
+            self._log_message("错误：请先选择文件类型")
+            return
+        
+        if self.filename_combo == '随机':
+            self.filename_combo = f"OGC_{random.randint(10**12, 10**13 - 1)}"
+        elif self.filename_combo == 'video':
+            self.filename_combo = f"video_{random.randint(10**12, 10**13 - 1)}"
+            self.filename_type = '.mp4'
+        elif self.filename_combo == 'music':
+            self.filename_combo = f"music_{random.randint(10**12, 10**13 - 1)}"
+            self.filename_type = '.mp3'
+        elif self.filename_combo == 'image':
+            self.filename_combo = f"image_{random.randint(10**12, 10**13 - 1)}"
+            self.filename_type = '.png'
+        elif self.filename_combo == 'other':
+            self.filename_combo = f"other_{random.randint(10**12, 10**13 - 1)}"
+            self.filename_type = '.bak'
+
+        download_file_name = self.filename_combo + self.filename_type
+
+        filename = url.split("/")[-1].split("?")[0] or download_file_name
+        num_threads = int(self.thread_combo.get())
+
+        self.running = True
+        self.start_button.configure(text="下载中...")
+        self.progressbar.set(0)
+        self._log_message(f"开始下载: {filename}")
+
+        # 创建下载器实例
+        self.downloader = SmartDownloader(
+            url=url,
+            filename=filename,
+            download_path=self.download_path,
+            num_threads=num_threads
+        )
+
+        # 启动下载线程
+        self.download_thread = threading.Thread(target=self._run_download)
+        self.download_thread.start()
+
+    def _run_download(self):
+        try:
+            # 修改原SmartDownloader的进度更新方式
+            def progress_callback(current, total):
+                progress = current / total
+                self.after(0, self._update_progress, progress)
+                self.after(0, self._update_status, 
+                         f"下载中: {current/1024/1024:.2f}MB/{total/1024/1024:.2f}MB")
+
+            # 给SmartDownloader添加进度回调（需要修改原类）
+            self.downloader.progress_callback = progress_callback
+
+            success = self.downloader.download()
+        
+            # 确保获取到实际文件大小
+            if success and self.downloader.total_size == 0:
+                try:
+                    self.downloader.total_size = os.path.getsize(self.downloader.file_path)
+                except:
+                    pass
+                    
+            self.after(0, self._download_complete, success)
+        except Exception as e:
+            self.after(0, self._log_message, f"严重错误: {str(e)}")
+            self.after(0, self._download_complete, False)
+    
+
+    def _save_history(self, filename, filesize, url):
+        """保存下载记录到数据库"""
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            filetype = os.path.splitext(filename)[1][1:] or "unknown"
+            save_path = self.download_path
+            
+            self.cursor.execute('''INSERT INTO downloads 
+                                (timestamp, filename, filetype, filesize, url, save_path)
+                                VALUES (?, ?, ?, ?, ?, ?)''',
+                             (timestamp, filename, filetype, filesize, url, save_path))
+            self.conn.commit()
+        except Exception as e:
+            self._log_message(f"保存历史记录失败: {str(e)}")
+            
+    def _select_path(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.download_path = path
+            self.path_label.configure(text=path)
+
+    def _show_history(self):
+        """显示历史记录窗口"""
+        history_window = ctk.CTkToplevel(self)
+        history_window.title("下载历史记录")
+        history_window.geometry("1000x600")
+
+        # 创建带滚动条的表格
+        frame = ctk.CTkFrame(history_window)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        columns = ("ID", "时间", "文件名", "类型", "大小(MB)", "URL", "保存路径")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="extended")
+        
+        # 配置列
+        tree.column("ID", width=50, anchor="center")
+        tree.column("时间", width=150, anchor="w")
+        tree.column("文件名", width=150, anchor="w")
+        tree.column("类型", width=80, anchor="center")
+        tree.column("大小(MB)", width=100, anchor="e")
+        tree.column("URL", width=300, anchor="w")
+        tree.column("保存路径", width=200, anchor="w")
+
+        # 设置列标题
+        for col in columns:
+            tree.heading(col, text=col)
+
+        # 添加滚动条
+        scroll_y = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        scroll_x = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+
+        # 布局组件
+        tree.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        scroll_x.grid(row=1, column=0, sticky="ew")
+
+        # 配置网格布局
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        # 从数据库加载数据
+        try:
+            self.cursor.execute('''SELECT id, timestamp, filename, filetype, 
+                                 filesize, url, save_path FROM downloads 
+                                 ORDER BY timestamp DESC''')
+            for row in self.cursor.fetchall():
+                size_mb = row[4]/1024/1024 if row[4] else 0
+                tree.insert("", "end", values=(
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    f"{size_mb:.2f}",
+                    row[5],
+                    row[6]
+                ))
+        except Exception as e:
+            self._log_message(f"加载历史记录失败: {str(e)}")
+
+    def _export_history(self):
+        """导出历史记录到CSV文件"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
+        )
+        if file_path:
+            try:
+                self.cursor.execute('''SELECT * FROM downloads''')
+                rows = self.cursor.fetchall()
+                with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['id', 'timestamp', 'filename', 'filetype', 
+                                   'filesize', 'url', 'save_path'])
+                    writer.writerows(rows)
+                self._log_message(f"✅ 历史记录已导出到: {file_path}")
+            except Exception as e:
+                self._log_message(f"❌ 导出失败: {str(e)}")
+
+    def _show_stats(self):
+        """显示统计信息窗口"""
+        """显示统计信息窗口"""
+        stats_window = ctk.CTkToplevel(self)
+        stats_window.title("下载统计信息")
+        stats_window.geometry("400x300")
+
+        # 统计参数
+        total_downloads = 0
+        total_size = 0
+        type_stats = {}
+        size_stats = {
+            "small": 0,    # < 1MB
+            "medium": 0,   # 1MB - 100MB
+            "large": 0     # > 100MB
+        }
+
+        # 从数据库获取统计数据
+        try:
+            # 总下载次数和总大小
+            self.cursor.execute('''SELECT COUNT(*), SUM(filesize) FROM downloads''')
+            total_downloads, total_size = self.cursor.fetchone()
+            
+            # 文件类型统计
+            self.cursor.execute('''SELECT filetype, COUNT(*) 
+                                 FROM downloads GROUP BY filetype''')
+            type_stats = {row[0]: row[1] for row in self.cursor.fetchall()}
+            
+            # 文件大小分布统计
+            self.cursor.execute('''SELECT 
+                SUM(CASE WHEN filesize < 1048576 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN filesize >= 1048576 AND filesize < 104857600 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN filesize >= 104857600 THEN 1 ELSE 0 END)
+                FROM downloads''')
+            size_stats = self.cursor.fetchone()
+            
+            size_stats = {
+                "small": size_stats[0] or 0,
+                "medium": size_stats[1] or 0,
+                "large": size_stats[2] or 0
+            }
+
+        except Exception as e:
+            self._log_message(f"读取统计信息失败: {str(e)}")
+
+        # 创建统计信息文本
+        stats_text = ctk.CTkTextbox(stats_window, wrap="word")
+        stats_text.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        info = f"""📊 下载统计信息：
+        
+                • 总下载次数: {total_downloads}
+                • 总下载量: {total_size/1024/1024:.2f} MB
+                • 平均文件大小: {total_size/(total_downloads or 1)/1024/1024:.2f} MB
+
+                📂 文件类型分布："""
+        for file_type, count in sorted(type_stats.items(), key=lambda x: x[1], reverse=True):
+            info += f"\n  - {file_type.upper()}: {count} 次 ({count/(total_downloads or 1)*100:.1f}%)"
+
+        info += "\n\n📏 文件大小分布："
+        for category, count in size_stats.items():
+            info += f"\n  - {category.capitalize()}: {count} 次"
+
+        stats_text.insert("1.0", info)
+        stats_text.configure(state="disabled")
+
+if __name__ == "__main__":
+    # 使用示例
+    # downloader = SmartDownloader(
+        # url="https://v9-default.365yg.com/27bb8ff402f2ef8f6406329cb88b4893/67b69612/video/tos/cn/tos-cn-ve-15/ocGe9IjQ2ErhHL1BcGCe9fX211GjC7ABDOImAB/?a=2011&ch=0&cr=0&dr=0&er=0&lr=unwatermarked&net=5&cd=0%7C0%7C0%7C0&cv=1&br=3641&bt=3641&cs=0&ds=4&ft=k7Fz7VVywSyRKJ8kmo~pK7pswApyY9kZvrKLO~ycdo0g3cI&mime_type=video_mp4&qs=0&rc=NGk1NWU5NGYzN2VnO2U2NkBpanZ5OnI5cmptdzMzNGkzM0AuYi4tXzM2NWMxYi5jYS8xYSNlXm9sMmRzYS5gLS1kLTBzcw%3D%3D&btag=80000e00010000&dy_q=1740015603&feature_id=46a7bb47b4fd1280f3d3825bf2b29388&l=20250220094003D8BE4E4022A715BEFD9D",
+        # filename="如此原神，怎能不爱.mp4",
+        # download_path="E:/软件删除/video",
+        # num_threads=8
+    # )
+    
+    # if downloader.download():
+        # print("下载成功完成！")
+    # else:
+        # print("下载失败！")
+
+
+
+    ctk.set_appearance_mode("System")
+    ctk.set_default_color_theme("blue")
+    app = DownloaderApp()
+    app.mainloop()

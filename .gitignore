@@ -1,0 +1,81 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+.env
+
+# ===== 用户数据（敏感，不提交） =====
+data/
+!data/.gitkeep
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 媒体与下载内容 =====
+music/
+videos/
+temp_videos/
+*.mp4
+*.mp3
+*.flv
+*.avi
+*.mkv
+*.mov
+*.wav
+*.flac
+
+# ===== 测试/临时数据 =====
+scripts/data/
+scripts/logs/
+scripts/music/
+*.tmp
+*.temp
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== 构建产物 =====
+*.exe
+*.msi
+*.dmg
+*.pkg
+*.whl
+
+# ===== 备份文件 =====
+*.bak
+*.backup
