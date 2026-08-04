@@ -31,6 +31,7 @@ from pages.about_page import AboutMeInterface
 from pages.home_page import Home
 from pages.people_page import peopleInterface, IconCardView
 from pages.video.video_multiplatform_page import MultiPlatformVideoInterface, PlatformPage
+from pages.video.pixiv_page_ui import PixivPage
 from pages.music.music_page import MusicInterface
 from pages.dashboard_page import DashboardInterface
 
@@ -88,7 +89,7 @@ class Window(SplitFluentWindow):
         self.videoPage_bilibili.setObjectName("哔哩哔哩")
         self.videoPage_twitter   = PlatformPage('twitter', '推特(X)', self)
         self.videoPage_twitter.setObjectName("推特")
-        self.videoPage_pixiv     = PlatformPage('pixiv', 'Pixiv', self)
+        self.videoPage_pixiv     = PixivPage(self)
         self.videoPage_pixiv.setObjectName("Pixiv")
         self.videoPage_xvideo    = PlatformPage('xvideo', 'Xvideo', self)
         self.videoPage_xvideo.setObjectName("Xvideo")

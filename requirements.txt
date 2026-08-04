@@ -9,3 +9,4 @@ requests>=2.31.0
 httpx>=0.25.0
 aiofiles>=23.2.0
 beautifulsoup4>=4.12.0
+pixivpy3>=3.8.0

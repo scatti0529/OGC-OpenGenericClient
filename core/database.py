@@ -541,6 +541,63 @@ def init_usage_table():
     conn.close()
 
 
+# ═══════════════ Pixiv Token 存储 ═══════════════
+
+def init_pixiv_tokens_table():
+    """初始化 Pixiv refresh token 存储表"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS pixiv_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT DEFAULT '',
+        refresh_token TEXT DEFAULT '',
+        access_token TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    )''')
+    conn.commit()
+    conn.close()
+
+
+def save_pixiv_refresh_token(refresh_token: str, access_token: str = '', username: str = '') -> bool:
+    """保存 Pixiv refresh token 到数据库（存在则更新）"""
+    try:
+        init_pixiv_tokens_table()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM pixiv_tokens WHERE id=1")
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(
+                "UPDATE pixiv_tokens SET refresh_token=?, access_token=?, username=?, updated_at=datetime('now','localtime') WHERE id=?",
+                (refresh_token, access_token, username, row['id'])
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO pixiv_tokens (username, refresh_token, access_token) VALUES (?,?,?)",
+                (username, refresh_token, access_token)
+            )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def get_pixiv_refresh_token() -> str:
+    """从数据库读取 Pixiv refresh token"""
+    try:
+        init_pixiv_tokens_table()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT refresh_token FROM pixiv_tokens WHERE id=1")
+        row = cursor.fetchone()
+        conn.close()
+        return row['refresh_token'] if row and row['refresh_token'] else ''
+    except Exception:
+        return ''
+
+
 def record_usage(module: str, action: str, detail: str = '', username: str = ''):
     """记录一次使用行为"""
     try:
