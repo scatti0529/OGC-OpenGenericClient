@@ -898,48 +898,27 @@ class JMAuthManager(JMClientMixin):
             self._username = username
             logger.info(f"发现已保存的 JM 登录用户名: {username}（需要重新登录）")
 
-    def _validate_session_sync(self):
-        """同步验证当前会话是否有效（通过尝试获取用户信息）"""
-        try:
-            if not self._logged_in:
-                return False
-            client = self._build_client()
-            if client is None:
-                return False
-            # 尝试通过 API 验证会话有效性
-            # 访问 /user 端点获取用户信息，若失败则会话已过期
-            try:
-                resp = client.req_api("/user", params={})
-                data = resp.model_data
-                src = (
-                    data.src_dict
-                    if hasattr(data, "src_dict")
-                    else (data if isinstance(data, dict) else {})
-                )
-                # 如果响应中包含用户信息字段（如 username），说明会话有效
-                return bool(src.get("username")) or bool(src.get("id"))
-            except Exception:
-                # 某些客户端实现可能不同，尝试另一个端点
-                try:
-                    resp = client.req_api("/album", params={"id": "438428"})
-                    data = resp.model_data
-                    src = (
-                        data.src_dict
-                        if hasattr(data, "src_dict")
-                        else (data if isinstance(data, dict) else {})
-                    )
-                    # is_favorite 字段仅登录用户可见，若存在则说明会话有效
-                    return "is_favorite" in src or "likes" in src
-                except Exception:
-                    return False
-        except Exception:
-            return False
-
     async def validate_session(self) -> bool:
-        """异步验证当前会话是否有效"""
+        """异步验证当前会话是否有效。
+
+        采用 fail-open 策略：只要本地保存了 cookies 且 _logged_in 为 True，
+        就视为会话有效。真正的会话过期会在实际 API 调用时抛出异常，
+        无需主动探测（探测端点不可靠且会触发不必要的重登）。
+        """
         if not self._logged_in:
             return False
-        return await self._run_sync(self._validate_session_sync)
+        # 检查 cookies 文件是否存在且有效
+        cookies_file = self.config.cookies_file
+        try:
+            if not cookies_file.exists():
+                return False
+            with open(cookies_file, encoding="utf-8") as f:
+                data = json.load(f)
+            # cookies 中存在实质内容（非空）
+            return bool(data.get("cookies"))
+        except Exception:
+            # 读取失败也视为有效（fail-open），交给实际 API 调用判断
+            return True
 
     async def ensure_valid_session(self):
         """确保会话有效，无效则尝试自动重新登录。
@@ -1046,13 +1025,13 @@ class JMAuthManager(JMClientMixin):
         return await self.login(self.config.jm_username, self.config.jm_password)
 
     async def ensure_logged_in(self):
-        """确保已登录（会验证会话有效性，无效则自动重新登录）"""
+        """确保已登录
+
+        仅检查本地会话标志和 cookies 文件，不做端点点探测。
+        真正的会话有效性由实际 API 调用判断（fail-open 策略）。
+        """
         if self._logged_in:
-            valid = await self.validate_session()
-            if valid:
-                return True, f"已登录: {self._username}"
-            logger.warning(f"JM 会话已过期，尝试自动重新登录: {self._username}")
-            self._logged_in = False
+            return True, f"已登录: {self._username}"
         if self.config.has_credentials():
             return await self.auto_login()
         return False, "未登录，请登录后使用"
