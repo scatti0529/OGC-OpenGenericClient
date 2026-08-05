@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-OGC 程序 - 统一启动入口
-========================
-从本文件启动整个 OGC 应用程序（登录窗口 → 主窗口）。
+OGC-OpenGenericClient 程序 - 统一启动入口
+=========================================
+从本文件启动整个 OGC-OpenGenericClient 应用程序（登录窗口 → 主窗口）。
 
 用法：::
 
@@ -15,6 +15,13 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+# ── Qt 平台插件路径修复（含中文/非 ASCII 路径时 PyQt5 的 QLibraryInfo 会损坏为 '?'，需在导入 Qt 前用原生 os.path 计算并注入）──
+if sys.platform == 'win32':
+    site_packages = os.path.join(BASE_DIR, '.venv', 'Lib', 'site-packages')
+    plugin_dir = os.path.join(site_packages, 'PyQt5', 'Qt5', 'plugins')
+    if os.path.isdir(os.path.join(plugin_dir, 'platforms')):
+        os.environ.setdefault('QT_QPA_PLATFORM_PLUGIN_PATH', plugin_dir)
 
 # ── 初始化日志系统 ──
 from core.logger import logger

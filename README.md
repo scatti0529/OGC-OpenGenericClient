@@ -56,13 +56,27 @@
 git clone https://github.com/scatti0529/OGC-OpenGenericClient.git
 cd OGC-OpenGenericClient
 
-# 2. 安装依赖
+# 2. 创建并激活虚拟环境（推荐）
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+# source .venv/bin/activate
+
+# 3. 安装依赖
 pip install -r requirements.txt
 
-# 3. 启动程序
+# 4. 启动程序
+# Windows（使用项目虚拟环境）:
+.venv\Scripts\python.exe main.py
+# 或激活虚拟环境后:
 python main.py
 ```
 
+> ⚠️ **注意**：程序运行于独立虚拟环境 `.venv/`，请勿在全局环境安装 PyQt6 / PySide6 系列的 Fluent Widgets、qframelesswindow 等包，否则会与 PyQt5 版本混用导致 `qfluentwidgets` 包目录被覆盖，引发 `installTranslator` 类型错误 / `QWidget: Must construct a QApplication` 等异常。
+>
+> ⚠️ **注意**：项目路径含中文时 PyQt5 无法自动定位平台插件，`main.py` 已在导入 Qt 前自动注入 `QT_QPA_PLATFORM_PLUGIN_PATH` 环境变量解决此问题。
+>
 > ⚠️ **注意**：首次运行会自动创建 `data/` 目录（用户数据库、配置）。`data/` 目录包含本地敏感配置（如 Cookie），已在 `.gitignore` 中排除，请勿提交到仓库。
 
 ## 🛠️ 技术栈
@@ -79,7 +93,7 @@ python main.py
 ## 📂 项目结构
 
 ```
-OGC初版/
+OGC-OpenGenericClient/
 ├── main.py                     # 启动入口（登录窗口 → 主窗口）
 ├── requirements.txt            # 依赖清单
 ├── core/                       # 核心模块

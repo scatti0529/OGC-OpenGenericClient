@@ -384,7 +384,7 @@ class Window(SplitFluentWindow):
         self.resize(1080, 780)
         self.setMinimumWidth(760)
         self.setWindowIcon(QIcon(icon))
-        self.setWindowTitle('OGC')
+        self.setWindowTitle('OGC-OpenGenericClient')
 
         self.setMicaEffectEnabled(cfg.get(cfg.micaEnabled))
 

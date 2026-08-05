@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-OGC 登录程序 - 启动入口
+OGC-OpenGenericClient 登录程序 - 启动入口
 包含登录/注册功能，登录成功后跳转主页
 """
 import sys
@@ -60,7 +60,7 @@ class LoginWindow(FluentWidget, Ui_Form):
 
         self.label.setScaledContents(False)
 
-        self.setWindowTitle('OGC 用户登录')
+        self.setWindowTitle('OGC-OpenGenericClient 用户登录')
         self.setWindowIcon(QIcon(LOGIN_LOGO))
         # 与主窗口 OGChome 保持一致尺寸，避免登录→过渡动画→主页切换时画面突兀
         self.resize(1080, 780)

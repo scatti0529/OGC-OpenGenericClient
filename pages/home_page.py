@@ -124,12 +124,12 @@ class segmented_widget(QWidget):
     def _announcement_content(self):
         return """
         <div>
-            <h2 style="margin:0 0 4px 0; font-size:20px; font-weight:bold; color:#1E88E5;">📢 OGC 工具箱正式上线公告</h2>
+            <h2 style="margin:0 0 4px 0; font-size:20px; font-weight:bold; color:#1E88E5;">📢 OGC-OpenGenericClient 正式上线公告</h2>
             <p style="margin:0 0 14px 0; font-size:12px; color:#909399;">2025-08-01 · 系统公告</p>
 
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">亲爱的用户：</p>
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
-                感谢您选择 <b>OGC 工具箱</b>！本工具致力于为您提供一站式的多媒体资源管理体验，
+                感谢您选择 <b>OGC-OpenGenericClient</b>！本工具致力于为您提供一站式的多媒体资源管理体验，
                 目前已集成 <b>音乐播放</b>、<b>多平台视频解析</b>、<b>人物资料库</b> 等核心功能。
             </p>
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
@@ -137,7 +137,7 @@ class segmented_widget(QWidget):
                 欢迎前往「关于我」页面获取联系方式并提交反馈。
             </p>
             <p style="margin:0 0 0 0; font-size:14px; line-height:1.8;">祝您使用愉快！</p>
-            <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC 开发团队</p>
+            <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC-OpenGenericClient 开发团队</p>
         </div>
         """
 
@@ -174,25 +174,25 @@ class segmented_widget(QWidget):
     def _about_content(self):
         return """
         <div>
-            <h2 style="margin:0 0 14px 0; font-size:20px; font-weight:bold; color:#1E88E5;">关于 OGC 工具箱</h2>
+            <h2 style="margin:0 0 14px 0; font-size:20px; font-weight:bold; color:#1E88E5;">关于 OGC-OpenGenericClient</h2>
 
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
                 <b>版本：</b>v1.2.0
             </p>
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
-                <b>作者：</b>OGC 开发团队
+                <b>作者：</b>OGC-OpenGenericClient 开发团队
             </p>
             <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
                 <b>开源协议：</b>MIT License
             </p>
             <p style="margin:0 0 0 0; font-size:14px; line-height:1.8;">
-                OGC 工具箱是一款基于 <b>PyQt5</b> 与 <b>PyQt-Fluent-Widgets</b> 构建的多功能桌面应用，
+                OGC-OpenGenericClient 是一款基于 <b>PyQt5</b> 与 <b>PyQt-Fluent-Widgets</b> 构建的多功能桌面应用，
                 集成了音乐播放、多平台视频解析、人物资料管理等功能，采用现代化 Fluent Design 风格界面。
             </p>
             <p style="margin:12px 0 0 0; font-size:14px; line-height:1.8;">
                 如您在使用过程中遇到任何问题，或有功能建议，欢迎提交反馈，帮助我们持续改进！
             </p>
-            <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC 开发团队</p>
+            <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC-OpenGenericClient 开发团队</p>
         </div>
         """
 
@@ -205,7 +205,7 @@ class BannerWidget(QWidget):
         self.setFixedHeight(336)
 
         self.vBoxLayout = QVBoxLayout(self)
-        self.galleryLabel = QLabel('OGC工具箱', self)
+        self.galleryLabel = QLabel('OGC-OpenGenericClient', self)
         self.banner = QPixmap(banner_img)
         # self.banner = QPixmap(down_img)
         self.linkCardView = LinkCardView(self)
