@@ -81,6 +81,10 @@ ALL_FEATURES = [
     ('video_pixiv', '视频-Pixiv'),
     ('video_xvideo', '视频-Xvideo'),
     ('video_youtube', '视频-YouTube'),
+    ('jmcomic_search', 'JMComic-搜索浏览'),
+    ('jmcomic_download', 'JMComic-下载打包'),
+    ('jmcomic_account', 'JMComic-账号收藏'),
+    ('jmcomic_subscribe', 'JMComic-订阅管理'),
 ]
 
 
@@ -543,6 +547,17 @@ def get_system_stats() -> dict:
             stats['music_file_count'] = musics_count
         except Exception:
             stats['music_file_count'] = 0
+        # JMComic 相关统计
+        try:
+            cursor.execute("SELECT COUNT(*) FROM jm_subscriptions")
+            stats['jmcomic_subscription_count'] = cursor.fetchone()[0]
+        except Exception:
+            stats['jmcomic_subscription_count'] = 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM download_quota")
+            stats['jmcomic_download_count'] = cursor.fetchone()[0]
+        except Exception:
+            stats['jmcomic_download_count'] = 0
         # 使用量统计
         try:
             stats['usage'] = get_usage_stats()
@@ -666,7 +681,8 @@ def get_usage_stats(start_date: str = '', end_date: str = '') -> dict:
         params.append(end_date)
     where_sql = (' WHERE ' + ' AND '.join(where)) if where else ''
 
-    result = {'music': {}, 'video': {}, 'video_sub': {}, 'people': {}, 'home': {}, 'downloads': {}}
+    result = {'music': {}, 'video': {}, 'video_sub': {}, 'people': {}, 'home': {},
+              'jmcomic': {}, 'downloads': {}}
     try:
         # 按 module + action 分组统计
         cursor.execute(f"SELECT module, action, COUNT(*) as cnt FROM usage_stats{where_sql} GROUP BY module, action", params)

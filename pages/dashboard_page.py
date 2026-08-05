@@ -527,6 +527,9 @@ class DashboardInterface(QScrollArea):
         self.statDownloadCard = StatCard(FIF.DOWNLOAD, "音乐下载", 0, "#E6A23C")
         self.statVideoCard = StatCard(FIF.VIDEO, "视频文件", 0, "#9C27B0")
         self.statPlaylistCard = StatCard(FIF.ALBUM, "播放列表", 0, "#FF9800")
+        self.statJmSubCard = StatCard(FIF.BOOK_SHELF, "JM订阅", 0, "#00BCD4")
+        self.statJmDownloadCard = StatCard(FIF.CLOUD, "JM下载", 0, "#FF5722")
+        self.statMusicFileCard = StatCard(FIF.MUSIC, "音乐文件", 0, "#4CAF50")
 
         # 3列布局
         self.statsGrid.addWidget(self.statUserCard, 0, 0)
@@ -535,6 +538,9 @@ class DashboardInterface(QScrollArea):
         self.statsGrid.addWidget(self.statDownloadCard, 1, 0)
         self.statsGrid.addWidget(self.statVideoCard, 1, 1)
         self.statsGrid.addWidget(self.statPlaylistCard, 1, 2)
+        self.statsGrid.addWidget(self.statJmSubCard, 2, 0)
+        self.statsGrid.addWidget(self.statJmDownloadCard, 2, 1)
+        self.statsGrid.addWidget(self.statMusicFileCard, 2, 2)
 
         self.mainLayout.addLayout(self.statsGrid)
 
@@ -668,6 +674,12 @@ class DashboardInterface(QScrollArea):
             "font-size: 14px; color: " + text_tertiary() + ";")
         self.statPlaylistCard.titleLabel.setStyleSheet(
             "font-size: 14px; color: " + text_tertiary() + ";")
+        self.statJmSubCard.titleLabel.setStyleSheet(
+            "font-size: 14px; color: " + text_tertiary() + ";")
+        self.statJmDownloadCard.titleLabel.setStyleSheet(
+            "font-size: 14px; color: " + text_tertiary() + ";")
+        self.statMusicFileCard.titleLabel.setStyleSheet(
+            "font-size: 14px; color: " + text_tertiary() + ";")
 
     # ---------- 数据加载 ----------
     def refresh(self):
@@ -680,6 +692,9 @@ class DashboardInterface(QScrollArea):
             self.statDownloadCard.setValue(stats.get('music_download_count', 0))
             self.statVideoCard.setValue(stats.get('video_file_count', 0))
             self.statPlaylistCard.setValue(stats.get('music_playlist_count', 0))
+            self.statJmSubCard.setValue(stats.get('jmcomic_subscription_count', 0))
+            self.statJmDownloadCard.setValue(stats.get('jmcomic_download_count', 0))
+            self.statMusicFileCard.setValue(stats.get('music_file_count', 0))
         except Exception as e:
             InfoBar.error(
                 title="加载统计失败", content=str(e),
@@ -702,9 +717,10 @@ class DashboardInterface(QScrollArea):
 
             # 模块中文名映射
             module_names = {'music': '音乐', 'video': '视频', 'people': '人物',
-                            'home': '首页', 'downloads': '总下载'}
+                            'home': '首页', 'jmcomic': 'JMComic', 'downloads': '总下载'}
             action_names = {'search': '搜索', 'play': '播放', 'download': '下载',
-                            'parse': '解析', 'visit': '访问'}
+                            'parse': '解析', 'visit': '访问', 'pack': '打包',
+                            'subscribe': '订阅', 'login': '登录', 'browse': '浏览'}
 
             # ── 柱状图：各模块的行为统计 ──
             barChart = QChart()
@@ -713,9 +729,9 @@ class DashboardInterface(QScrollArea):
 
             barSeries = QBarSeries()
             # 收集所有模块和动作
-            modules = ['music', 'video', 'home', 'people']
+            modules = ['music', 'video', 'home', 'people', 'jmcomic']
             # 动作分组：一个动作一组柱，每个模块一个 set
-            for action in ('search', 'play', 'download', 'parse', 'visit'):
+            for action in ('search', 'play', 'download', 'parse', 'visit', 'pack', 'subscribe'):
                 barSet = QBarSet(action_names.get(action, action))
                 total = 0
                 for mod in modules:

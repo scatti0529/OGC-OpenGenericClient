@@ -1583,16 +1583,29 @@ class JMComicService(QObject):
             except Exception:
                 traceback.print_exc()
 
+    # ---------- 使用量记录 ----------
+    @staticmethod
+    def _record_usage(action: str, detail: str = '', username: str = ''):
+        """记录 JMComic 使用量"""
+        try:
+            from core.database import record_usage
+            record_usage('jmcomic', action, detail, username)
+        except Exception:
+            pass
+
     # ---------- 浏览 ----------
     def search(self, keyword, page, mode, on_done, on_error):
+        self._record_usage('search', f'{mode}:{keyword}')
         return self.submit(self.browser.search_albums, keyword, page, mode,
                            on_done=on_done, on_error=on_error)
 
     def get_detail(self, album_id, on_done, on_error):
+        self._record_usage('browse', f'detail:{album_id}')
         return self.submit(self.browser.get_album_detail, album_id,
                            on_done=on_done, on_error=on_error)
 
     def get_ranking(self, rank_type, page, category, on_done, on_error):
+        self._record_usage('browse', f'rank:{rank_type}:{category}')
         method = {
             "day": self.browser.get_day_ranking,
             "week": self.browser.get_week_ranking,
@@ -1601,20 +1614,24 @@ class JMComicService(QObject):
         return self.submit(method, page, category, on_done=on_done, on_error=on_error)
 
     def get_category_albums(self, category, order_by, time_range, page, on_done, on_error):
+        self._record_usage('browse', f'category:{category}')
         return self.submit(self.browser.get_category_albums, category, order_by, time_range, page,
                            on_done=on_done, on_error=on_error)
 
     # ---------- 账号 ----------
     def login(self, username, password, on_done, on_error):
+        self._record_usage('login', username)
         return self.submit(self.auth.login, username, password,
                            on_done=on_done, on_error=on_error)
 
     def get_favorites(self, client, page, folder_id, username, on_done, on_error):
+        self._record_usage('browse', 'favorites')
         return self.submit(self.browser.get_favorites, client, page, folder_id, username,
                            on_done=on_done, on_error=on_error)
 
     # ---------- 下载 ----------
     def download(self, album_id, skip, chapter_idx, on_progress, on_done, on_error):
+        self._record_usage('download', album_id)
         task = DownloadTask(self.downloader, album_id, skip, chapter_idx, parent=self)
         task.progress.connect(on_progress)
         task.finished.connect(on_done)
@@ -1628,6 +1645,7 @@ class JMComicService(QObject):
         return task
 
     def pack(self, source_dir, output_name, pack_format, password):
+        self._record_usage('pack', pack_format)
         packer = JMPacker(pack_format=pack_format, password=password)
         return packer.pack(source_dir, output_name)
 

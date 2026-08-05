@@ -323,6 +323,21 @@ class Window(SplitFluentWindow):
             if video_ui is not None and hasattr(video_ui, 'setAllowedPlatforms'):
                 video_ui.setAllowedPlatforms(allowed_platforms)
 
+            # JMComic 功能权限（people 模块下的子功能）
+            jmcomic_features = {
+                'jmcomic_search': 'search_tab',
+                'jmcomic_download': 'download_tab',
+                'jmcomic_account': 'account_tab',
+                'jmcomic_subscribe': 'subscribe_tab',
+            }
+            people_ui = getattr(self, 'PeopleInterface', None)
+            if people_ui is not None:
+                for feat_key, tab_attr in jmcomic_features.items():
+                    allowed = features.get(feat_key, True)
+                    tab = getattr(people_ui, tab_attr, None)
+                    if tab is not None:
+                        tab.setVisible(allowed)
+
             # ══ 功能级权限控制 ══
             self._apply_feature_permissions(features)
 
