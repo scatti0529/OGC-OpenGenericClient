@@ -986,6 +986,16 @@ class JMAuthManager(JMClientMixin):
             logger.error(f"JM 登录失败: {e}")
             return False, f"登录失败: {str(e)}"
 
+    def _save_credentials_to_config(self, username, password):
+        """将 JM 账号密码保存到主程序 config.json，供会话过期后自动重登"""
+        try:
+            from core.config import config as CFG
+            CFG["jm_username"] = username
+            CFG["jm_password"] = password
+            logger.info("已保存 JM 账号凭据到主程序配置（用于自动重登）")
+        except Exception as e:
+            logger.error(f"保存 JM 凭据失败: {e}")
+
     def _login_sync(self, username, password):
         try:
             option = self._get_option()
@@ -1007,6 +1017,9 @@ class JMAuthManager(JMClientMixin):
                 except Exception:
                     pass
             self._save_session(cookies)
+            # 保存凭据到主程序配置（登录成功后），供 cookies 过期后自动重登
+            self._save_credentials_to_config(username, password)
+
             logger.info(f"JM 用户 {username} 登录成功")
             return True, f"登录成功，欢迎 {username}！"
         except Exception as e:

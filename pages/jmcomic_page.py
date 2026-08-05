@@ -992,12 +992,44 @@ class AccountTab(QWidget):
 
     def _on_favorites_error(self, etype, emsg):
         self.refresh_btn.setEnabled(True)
-        # 收藏获取失败时检查是否是登录问题
-        if "登录" in str(emsg) or "未登录" in str(emsg) or "fav" in str(emsg).lower():
-            show_error(self, "收藏获取失败", "登录状态可能已失效，请重新登录")
+        # 检测 401 未登录错误 → 自动重新登录并重试
+        msg = str(emsg)
+        if "401" in msg or "請先登入" in msg or "未登录" in msg or "login" in msg.lower():
+            show_info(self, "登录状态已失效", "正在尝试自动重新登录...")
+            # 清除失效会话，触发自动重登
+            self.service.auth._logged_in = False
             self._refresh_login_status()
+
+            # 如果配置了 JM 凭据，自动重登后重试
+            settings = self.service.config.plugin_config
+            username = settings.get("jm_username", "")
+            password = settings.get("jm_password", "")
+            if username and password:
+                self.service.login(
+                    username, password,
+                    on_done=self._on_auto_relogin_done,
+                    on_error=self._on_auto_relogin_error,
+                )
+            else:
+                show_error(self, "收藏获取失败", "登录状态已失效，请重新登录（未配置自动重登凭据）")
         else:
             show_error(self, "收藏获取失败", emsg)
+
+    def _on_auto_relogin_done(self, result):
+        """自动重登完成 → 成功则重试收藏"""
+        success, message = result
+        if success:
+            show_info(self, "自动重登成功", message)
+            self._refresh_login_status()
+            # 自动重试收藏
+            self._load_favorites()
+        else:
+            show_error(self, "自动重登失败", message)
+            self._refresh_login_status()
+
+    def _on_auto_relogin_error(self, etype, emsg):
+        show_error(self, "自动重登失败", emsg)
+        self._refresh_login_status()
 
     def _render_favorites(self, albums, folders):
         while self.fav_layout.count():
