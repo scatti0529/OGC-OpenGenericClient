@@ -6,6 +6,7 @@
 可通过导航栏子项或主页图标按钮跳转。
 """
 import os
+import re
 import sys
 import time
 
@@ -19,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from qfluentwidgets import (
     CardWidget, FluentIcon as FIF, InfoBar, InfoBarPosition,
-    SegmentedWidget, LineEdit, PrimaryPushButton, PushButton,
+    SegmentedWidget, LineEdit, TextEdit, PrimaryPushButton, PushButton,
     BodyLabel, SubtitleLabel, ProgressBar, StateToolTip,
     ScrollArea, CaptionLabel, StrongBodyLabel, IconWidget
 )
@@ -50,22 +51,30 @@ class ParseThread(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, platform: str, url: str, sessdata: str = '', parent=None):
+    def __init__(self, platform: str, url: str, sessdata: str = '', parent=None,
+                 use_backup_parser: bool = False):
         super().__init__(parent)
         self.platform = platform
         self.url = url
         self.sessdata = sessdata
+        self.use_backup_parser = use_backup_parser  # True时使用备用解析器（如 gallery-dl）
 
     def run(self):
         try:
-            parser = get_parser(self.platform)
-            if not parser:
-                self.error.emit(f"不支持的平台: {self.platform}")
-                return
-            if self.platform == 'bilibili':
-                items = parser.parse(self.url, sessdata=self.sessdata)
-            else:
+            if self.use_backup_parser and self.platform == 'twitter':
+                # 备用解析：调用 gallery-dl 专用推特下载器
+                from services.platform_parsers import TwitterGalleryDLParser
+                parser = TwitterGalleryDLParser()
                 items = parser.parse(self.url)
+            else:
+                parser = get_parser(self.platform)
+                if not parser:
+                    self.error.emit(f"不支持的平台: {self.platform}")
+                    return
+                if self.platform == 'bilibili':
+                    items = parser.parse(self.url, sessdata=self.sessdata)
+                else:
+                    items = parser.parse(self.url)
             if not items:
                 self.error.emit("未找到可下载的媒体，请检查链接")
                 return
@@ -85,6 +94,11 @@ class PreviewLoadThread(QThread):
         self._pix = None
 
     def run(self):
+        # 低优先级，避免阻塞主界面绘制、提升流畅度（需在线程启动后设置）
+        try:
+            self.setPriority(QThread.LowPriority)
+        except Exception:
+            pass
         try:
             import requests
             resp = requests.get(self.url, timeout=8)
@@ -469,6 +483,18 @@ class PlatformPage(QScrollArea):
         self._parse_sessdata = ''
         self._parse_retry_count = 0
         self._parse_retry_max = 3
+        # 多链接解析队列（支持回车/英文逗号分隔，依次解析）
+        self._parse_queue = []
+        self._queue_parsing = False
+        self._active_parsers = []
+        self._parse_total = 0
+        self._parse_done = 0
+        self._parse_failed = 0
+        self._parse_retry_map = {}
+        self._parse_fail_msgs = []
+        # 已启用备用解析（gallery-dl）的链接集合：原解析重试耗尽后启用
+        self._parse_backup_done = set()
+        self._MAX_CONCURRENT = 2  # 同时最多并发解析条数，其余入队依次解析
         # 下载队列（依次串行下载）
         self._download_queue = []
         self._queue_active = False
@@ -499,21 +525,41 @@ class PlatformPage(QScrollArea):
         inputLayout.addLayout(titleRow)
 
         urlRow = QHBoxLayout()
-        self.urlEdit = LineEdit(inputCard)
-        self.urlEdit.setPlaceholderText(f"请输入{display_name}分享链接...")
-        self.urlEdit.setClearButtonEnabled(True)
+        urlRow.setSpacing(10)
+        self.urlEdit = TextEdit(inputCard)
+        self.urlEdit.setPlaceholderText(
+            f"请输入{display_name}分享链接，支持多条链接\n"
+            "多个链接可用回车或英文逗号分隔，点击「解析」将依次解析"
+        )
+        self.urlEdit.setAcceptRichText(False)  # 仅纯文本，避免粘贴黑条
+        self.urlEdit.setFixedHeight(100)
         urlRow.addWidget(self.urlEdit, 1)
 
-        # 粘贴按钮：清空输入框并填入刚刚复制的内容
+        # 右侧按钮列：第一行 粘贴+追加粘贴，第二行 解析
+        btnCol = QVBoxLayout()
+        btnCol.setSpacing(8)
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
         self.pasteBtn = PushButton(FIF.PASTE, "粘贴", inputCard)
-        self.pasteBtn.setFixedWidth(80)
+        self.pasteBtn.setFixedWidth(84)
+        self.pasteBtn.setFixedHeight(30)
         self.pasteBtn.setToolTip("清空输入框并粘贴剪贴板内容")
         self.pasteBtn.clicked.connect(self._paste_from_clipboard)
-        urlRow.addWidget(self.pasteBtn)
+        row1.addWidget(self.pasteBtn)
+
+        self.appendBtn = PushButton(FIF.ADD, "追加", inputCard)
+        self.appendBtn.setFixedWidth(84)
+        self.appendBtn.setFixedHeight(30)
+        self.appendBtn.setToolTip("若输入框已有内容，则在末尾回车后追加粘贴剪贴板内容")
+        self.appendBtn.clicked.connect(self._append_paste_from_clipboard)
+        row1.addWidget(self.appendBtn)
+        btnCol.addLayout(row1)
 
         self.parseBtn = PrimaryPushButton(FIF.SYNC, "解析", inputCard)
+        self.parseBtn.setFixedHeight(34)
         self.parseBtn.clicked.connect(self._parse)
-        urlRow.addWidget(self.parseBtn)
+        btnCol.addWidget(self.parseBtn)
+        urlRow.addLayout(btnCol)
         inputLayout.addLayout(urlRow)
 
         # B站额外 SESSDATA 输入（用 QWidget 容器以便控制显示）
@@ -557,6 +603,26 @@ class PlatformPage(QScrollArea):
         root = get_download_root()
         return f"📁 下载目录: {os.path.join(root, self.platform + '-download')}（图片/视频/音频自动分类）"
 
+    def closeEvent(self, event):
+        """关闭时回收所有活动解析/下载线程"""
+        threads = []
+        for t in list(getattr(self, '_active_parsers', [])):
+            threads.append(t)
+        for card in list(self._cards):
+            t = getattr(card, '_dl_thread', None)
+            if t is not None:
+                threads.append(t)
+        for t in threads:
+            try:
+                if t.isRunning():
+                    t.requestInterruption()
+                    t.wait(1000)
+                t.deleteLater()
+            except (RuntimeError, Exception):
+                pass
+        self._active_parsers = []
+        super().closeEvent(event)
+
     def _paste_from_clipboard(self):
         """清空输入框并填入刚刚复制的内容"""
         try:
@@ -564,7 +630,7 @@ class PlatformPage(QScrollArea):
             text = QApplication.clipboard().text().strip()
             if text:
                 self.urlEdit.clear()
-                self.urlEdit.setText(text)
+                self.urlEdit.setPlainText(text)
                 InfoBar.success(
                     title="已粘贴", content="剪贴板内容已填入输入框",
                     orient=Qt.Horizontal, isClosable=True,
@@ -583,6 +649,50 @@ class PlatformPage(QScrollArea):
                 position=InfoBarPosition.BOTTOM_RIGHT, duration=3000, parent=self
             )
 
+    def _append_paste_from_clipboard(self):
+        """追加粘贴：若输入框已有内容，在末尾回车后粘贴；为空则直接粘贴"""
+        try:
+            from PyQt5.QtWidgets import QApplication
+            text = QApplication.clipboard().text().strip()
+            if not text:
+                InfoBar.warning(
+                    title="提示", content="剪贴板为空",
+                    orient=Qt.Horizontal, isClosable=True,
+                    position=InfoBarPosition.TOP, duration=2000, parent=self
+                )
+                return
+            current = self.urlEdit.toPlainText()
+            if current.strip():
+                new_text = current.rstrip() + "\n" + text
+            else:
+                new_text = text
+            self.urlEdit.setPlainText(new_text)
+            InfoBar.success(
+                title="已追加", content="剪贴板内容已追加到输入框",
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=2000, parent=self
+            )
+        except Exception as e:
+            InfoBar.error(
+                title="追加粘贴失败", content=str(e),
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT, duration=3000, parent=self
+            )
+
+    @staticmethod
+    def _extract_urls(text: str) -> list:
+        """从文本中提取多平台链接（支持回车 / 英文逗号 / 空格分隔）"""
+        found = re.findall(r'https?://[^\s，,\n]+', text or '')
+        urls = [u.strip("`\"'") for u in found if u.strip("`\"'")]
+        # 去重并保持顺序
+        seen = set()
+        result = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                result.append(u)
+        return result
+
     def _parse(self):
         """解析链接（防误触：下载中/解析中禁止重复触发）"""
         # 下载中禁止重新解析（防止销毁正在运行的下载线程）
@@ -595,11 +705,12 @@ class PlatformPage(QScrollArea):
             return
 
         # 解析中禁止重复解析
-        if self._parsing:
+        if self._parsing or self._queue_parsing:
             return
 
-        url = self.urlEdit.text().strip()
-        if not url:
+        text = self.urlEdit.toPlainText()
+        urls = self._extract_urls(text)
+        if not urls:
             InfoBar.warning(
                 title="提示", content="请输入下载链接",
                 orient=Qt.Horizontal, isClosable=True,
@@ -607,54 +718,189 @@ class PlatformPage(QScrollArea):
             )
             return
 
-        # 保存本次解析参数并重置重试计数
-        self._parse_url = url
         self._parse_sessdata = self.sessdataEdit.text().strip() if self.platform == 'bilibili' else ''
-        self._parse_retry_count = 0
+        # 先清空旧结果（会同时清理旧的解析队列/活动线程）
+        self._clear_results()
+        # 初始化多链接解析队列
+        self._parse_queue = list(urls)
+        self._queue_parsing = True
+        self._active_parsers = []
+        self._parse_total = len(urls)
+        self._parse_done = 0
+        self._parse_failed = 0
+        self._parse_retry_map = {}
+        self._parse_fail_msgs = []
+        self._parse_backup_done = set()
 
-        # 开始解析
-        self._start_parse(retrying=False)
-
-    def _start_parse(self, retrying: bool = False):
-        """启动解析（支持重试）
-
-        Args:
-            retrying: 是否为自动重试
-        """
-        # 锁定输入控件，防止解析中再次点击
-        self._parsing = True
+        # 锁定输入控件
         self.parseBtn.setEnabled(False)
-        if retrying:
-            self.parseBtn.setText(f"重试 {self._parse_retry_count}/{self._parse_retry_max}...")
-            self.emptyLabel.setText(f"解析失败，正在自动重试 ({self._parse_retry_count}/{self._parse_retry_max})...")
-        else:
-            self.parseBtn.setText("解析中...")
-            self.emptyLabel.setText("正在解析...")
         self.pasteBtn.setEnabled(False)
+        self.appendBtn.setEnabled(False)
         self.urlEdit.setEnabled(False)
         if hasattr(self, 'sessdataEdit'):
             self.sessdataEdit.setEnabled(False)
+        self.emptyLabel.setVisible(True)
+        self.emptyLabel.setText(f"正在解析 {self._parse_done}/{self._parse_total} ...")
+        self.resultsScroll.setVisible(True)
 
-        # 清空现有结果（首次解析时）
-        if not retrying:
-            self._clear_results()
+        # 启动解析（并发最多 _MAX_CONCURRENT 条，其余入队）
+        for _ in range(min(self._MAX_CONCURRENT, len(self._parse_queue))):
+            self._launch_next_parser()
 
-        # 安全回收旧解析线程（防止访问已删除的 C++ 对象）
-        old_thread = self._parse_thread
-        self._parse_thread = None
-        if old_thread is not None:
+    def _launch_next_parser(self):
+        """从解析队列中取出下一条链接启动解析线程"""
+        if not self._parse_queue:
+            return
+        url = self._parse_queue.pop(0)
+        retry_count = self._parse_retry_map.get(url, 0)
+        # 若该链接原解析重试已耗尽（已加入 _parse_backup_done），启用备用解析器
+        use_backup_parser = url in getattr(self, '_parse_backup_done', set())
+
+        thread = ParseThread(self.platform, url, self._parse_sessdata, self,
+                             use_backup_parser=use_backup_parser)
+        thread._parse_url = url
+        thread._retry_count = retry_count
+        # 将每条链接的结果绑定到对应回调
+        thread.finished.connect(
+            lambda items, u=url: self._on_parse_finished(items, u))
+        thread.error.connect(
+            lambda msg, u=url: self._on_parse_error(msg, u))
+        self._active_parsers.append(thread)
+        thread.start()
+
+    def _on_parse_finished(self, items: list, url: str):
+        """单条链接解析完成，追加卡片"""
+        # 从活动列表移除该线程
+        self._remove_parser_of(url)
+        self._parse_retry_map.pop(url, None)
+        self._parse_done += 1
+
+        if items:
+            # 暂停重绘以提升大量卡片创建时的流畅度
+            self.resultsView.setUpdatesEnabled(False)
+            base_row = self.resultsGrid.rowCount()
+            for i, item in enumerate(items):
+                card = MediaCard(item, self.platform, self.resultsView)
+                row = base_row + i // 4
+                col = i % 4
+                self.resultsGrid.addWidget(card, row, col)
+                self._cards.append(card)
+            self.resultsView.setUpdatesEnabled(True)
+            self.resultsView.update()
+            self._items.extend(items)
+
+        self._update_parse_progress(success=True)
+        # 启动下一条（保持并发数）
+        self._launch_next_parser()
+
+    def _on_parse_error(self, message: str, url: str):
+        """单条链接解析失败（自动重试最多 _parse_retry_max 次后跳过）"""
+        # 从活动列表移除该线程
+        self._remove_parser_of(url)
+
+        retry_count = self._parse_retry_map.get(url, 0)
+        if retry_count < self._parse_retry_max:
+            # 加入重试队列末尾
+            self._parse_retry_map[url] = retry_count + 1
+            self._parse_queue.append(url)
+            InfoBar.warning(
+                title="解析失败，自动重试",
+                content=f"第 {retry_count + 1}/{self._parse_retry_max} 次重试: {message}",
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=2000, parent=self
+            )
+        else:
+            # 重试耗尽：推特平台启用 gallery-dl 备用解析继续获取文件，
+            # 备用解析也失败时才判定该条失败
+            if self.platform == 'twitter' and url not in self._parse_backup_done:
+                self._parse_backup_done.add(url)
+                self._parse_queue.append(url)
+                InfoBar.info(
+                    title="原解析失败，启用备用解析",
+                    content="已切换 gallery-dl 专用解析器，正在获取媒体文件...",
+                    orient=Qt.Horizontal, isClosable=True,
+                    position=InfoBarPosition.TOP, duration=3000, parent=self
+                )
+            else:
+                # 备用解析仍失败（或非推特平台），判定该条失败
+                self._parse_retry_map.pop(url, None)
+                self._parse_done += 1
+                self._parse_failed += 1
+                self._parse_fail_msgs.append(f"{url}: {message}")
+                self._update_parse_progress(success=False)
+
+        # 无论重试还是失败，都启动下一条保持并发数（重试条目已重新入队，会被后续调度）
+        self._launch_next_parser()
+
+    def _update_parse_progress(self, success: bool):
+        """所有活动解析结束后，统一更新解析进度"""
+        # 若仍有活动线程，仅更新提示文字
+        if self._active_parsers or self._parse_queue:
+            self.emptyLabel.setText(
+                f"正在解析 {self._parse_done}/{self._parse_total} ...")
+            return
+
+        # 全部解析完成
+        self._queue_parsing = False
+        self._parsing = False
+        self.parseBtn.setEnabled(True)
+        self.parseBtn.setText("解析")
+        self.pasteBtn.setEnabled(not self._downloading)
+        self.appendBtn.setEnabled(not self._downloading)
+        self.urlEdit.setEnabled(not self._downloading)
+        if hasattr(self, 'sessdataEdit'):
+            self.sessdataEdit.setEnabled(not self._downloading)
+
+        if self._cards:
+            self.emptyLabel.setVisible(False)
+            self.resultsScroll.setVisible(True)
+        else:
+            self.emptyLabel.setVisible(True)
+            self.emptyLabel.setText("解析失败")
+            self.resultsScroll.setVisible(False)
+
+        # 汇总提示
+        if self._parse_failed:
+            msg = f"共 {self._parse_total} 条链接，成功 {self._parse_total - self._parse_failed} 条，失败 {self._parse_failed} 条"
+            InfoBar.error(
+                title="部分链接解析失败", content=msg,
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.BOTTOM_RIGHT, duration=5000, parent=self
+            )
+        else:
+            total_media = len(self._items)
+            InfoBar.success(
+                title="解析完成", content=f"共 {self._parse_total} 条链接，找到 {total_media} 个媒体资源",
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=3000, parent=self
+            )
+
+    def _remove_parser_of(self, url: str):
+        """从活动线程列表中移除指定链接对应的解析线程并回收"""
+        for t in list(self._active_parsers):
+            if getattr(t, '_parse_url', None) == url:
+                try:
+                    if t.isRunning():
+                        t.wait(500)
+                    t.deleteLater()
+                except (RuntimeError, Exception):
+                    pass
+                try:
+                    self._active_parsers.remove(t)
+                except ValueError:
+                    pass
+                return
+        # 找不到：兼容通过对象身份查找
+        for t in list(self._active_parsers):
             try:
-                if old_thread.isRunning():
-                    old_thread.wait(1000)
-                old_thread.deleteLater()
+                if not t.isRunning():
+                    t.deleteLater()
+                    self._active_parsers.remove(t)
             except (RuntimeError, Exception):
-                pass
-
-        self._parse_thread = ParseThread(
-            self.platform, self._parse_url, self._parse_sessdata)
-        self._parse_thread.finished.connect(self._on_parse_finished)
-        self._parse_thread.error.connect(self._on_parse_error)
-        self._parse_thread.start()
+                try:
+                    self._active_parsers.remove(t)
+                except ValueError:
+                    pass
 
     def _enqueue_download(self, card):
         """将卡片加入下载队列（按点击顺序依次下载）"""
@@ -688,6 +934,17 @@ class PlatformPage(QScrollArea):
         # 清空下载队列
         self._download_queue = []
         self._queue_active = False
+        # 清空解析队列及活动解析线程
+        self._parse_queue = []
+        for t in list(getattr(self, '_active_parsers', [])):
+            try:
+                if t.isRunning():
+                    t.wait(300)
+                t.deleteLater()
+            except (RuntimeError, Exception):
+                pass
+        self._active_parsers = []
+        self._queue_parsing = False
         for card in list(self._cards):
             try:
                 t = getattr(card, '_dl_thread', None)
@@ -729,9 +986,10 @@ class PlatformPage(QScrollArea):
         """
         if downloading:
             self._downloading = True
-            # 禁用解析、粘贴、输入等控件
+            # 禁用解析、粘贴、追加粘贴、输入等控件
             self.parseBtn.setEnabled(False)
             self.pasteBtn.setEnabled(False)
+            self.appendBtn.setEnabled(False)
             self.urlEdit.setEnabled(False)
             if hasattr(self, 'sessdataEdit'):
                 self.sessdataEdit.setEnabled(False)
@@ -741,98 +999,17 @@ class PlatformPage(QScrollArea):
                 getattr(c, '_download_active', False) for c in self._cards)
             if not still_downloading:
                 self._downloading = False
-                # 恢复控件（若不在解析中）
-                if not self._parsing:
+                # 恢复控件（若不在解析中：普通解析或队列解析）
+                if not self._parsing and not self._queue_parsing:
                     self.parseBtn.setEnabled(True)
                     self.pasteBtn.setEnabled(True)
+                    self.appendBtn.setEnabled(True)
                     self.urlEdit.setEnabled(True)
                     if hasattr(self, 'sessdataEdit'):
                         self.sessdataEdit.setEnabled(True)
                 # 恢复所有卡片按钮
                 for card in self._cards:
                     card.on_page_downloading_changed(False)
-
-    def _on_parse_finished(self, items: list):
-        """解析完成"""
-        self._parsing = False
-        self.parseBtn.setEnabled(True)
-        self.parseBtn.setText("解析")
-        self.pasteBtn.setEnabled(not self._downloading)
-        self.urlEdit.setEnabled(not self._downloading)
-        if hasattr(self, 'sessdataEdit'):
-            self.sessdataEdit.setEnabled(not self._downloading)
-        # 安全回收解析线程
-        old_thread = self._parse_thread
-        self._parse_thread = None
-        if old_thread is not None:
-            try:
-                if old_thread.isRunning():
-                    old_thread.wait(500)
-                old_thread.deleteLater()
-            except (RuntimeError, Exception):
-                pass
-
-        self._items = items
-        self.emptyLabel.setVisible(False)
-        self.resultsScroll.setVisible(True)
-
-        for i, item in enumerate(items):
-            card = MediaCard(item, self.platform, self.resultsView)
-            row = i // 4
-            col = i % 4
-            self.resultsGrid.addWidget(card, row, col)
-            self._cards.append(card)
-
-        InfoBar.success(
-            title="解析完成", content=f"找到 {len(items)} 个媒体资源",
-            orient=Qt.Horizontal, isClosable=True,
-            position=InfoBarPosition.TOP, duration=3000, parent=self
-        )
-
-    def _on_parse_error(self, message: str):
-        """解析失败（自动重试最多 3 次）"""
-        # 安全回收解析线程
-        old_thread = self._parse_thread
-        self._parse_thread = None
-        if old_thread is not None:
-            try:
-                if old_thread.isRunning():
-                    old_thread.wait(500)
-                old_thread.deleteLater()
-            except (RuntimeError, Exception):
-                pass
-
-        # 自动重试
-        if self._parse_retry_count < self._parse_retry_max:
-            self._parse_retry_count += 1
-            InfoBar.warning(
-                title="解析失败，自动重试",
-                content=f"第 {self._parse_retry_count}/{self._parse_retry_max} 次重试: {message}",
-                orient=Qt.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=3000, parent=self
-            )
-            self._start_parse(retrying=True)
-            return
-
-        # 重试耗尽，最终失败
-        self._parsing = False
-        self.parseBtn.setEnabled(True)
-        self.parseBtn.setText("解析")
-        self.pasteBtn.setEnabled(not self._downloading)
-        self.urlEdit.setEnabled(not self._downloading)
-        if hasattr(self, 'sessdataEdit'):
-            self.sessdataEdit.setEnabled(not self._downloading)
-        # 重置重试计数
-        self._parse_retry_count = 0
-
-        self.emptyLabel.setVisible(True)
-        self.emptyLabel.setText("解析失败")
-        self.resultsScroll.setVisible(False)
-        InfoBar.error(
-            title="解析失败", content=message,
-            orient=Qt.Horizontal, isClosable=True,
-            position=InfoBarPosition.BOTTOM_RIGHT, duration=5000, parent=self
-        )
 
 
 # ═══════════════════════════════════════════════════════════

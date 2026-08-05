@@ -72,6 +72,8 @@ class PixivConfigDialog(QDialog):
         self.setWindowTitle("Pixiv 配置")
         self.setModal(True)
         self.resize(560, 640)
+        self.setMinimumSize(560, 640)
+        self.setMinimumHeight(640)
         self._downloader = PixivDownloader(
             log_callback=lambda msg: self._on_log(msg))
         self._log_text = []
@@ -256,8 +258,11 @@ class PixivConfigDialog(QDialog):
         self.logLabel.setStyleSheet("color: " + theme_color('#909399', '#8A8A8A') + ";")
         formLayout.addWidget(self.logLabel)
 
-        formLayout.addStretch()
+        # 移除 formLayout 中的 stretch，让滚动区正确占满可用空间
+        # formLayout.addStretch()
         scroll.setWidget(scrollWidget)
+        # 设置滚动区最小高度，确保内容不被底部按钮遮挡
+        scroll.setMinimumHeight(480)
         layout.addWidget(scroll, 1)
 
         # ── 底部按钮 ──
@@ -386,6 +391,9 @@ class PixivFeatureDialog(QDialog):
 
         titleLabel = SubtitleLabel("Pixiv 功能清单", self)
         layout.addWidget(titleLabel)
+        # 设置弹窗最小高度，确保内容不被底部按钮遮挡
+        self.setMinimumSize(520, 520)
+        self.setMinimumHeight(520)
         caption = CaptionLabel(
             "以下为 pixivd-3.3 与 gallery-dl 下载器提供的其他功能开关", self)
         caption.setStyleSheet("color: " + theme_color('#909399', '#8A8A8A') + ";")
@@ -453,8 +461,11 @@ class PixivFeatureDialog(QDialog):
             "color: " + theme_color('#909399', '#8A8A8A') + ";")
         formLayout.addWidget(infoLabel)
 
-        formLayout.addStretch()
+        # 移除 stretch，让滚动区正确占满空间
+        # formLayout.addStretch()
         scroll.setWidget(scrollWidget)
+        # 设置滚动区最小高度
+        scroll.setMinimumHeight(400)
         layout.addWidget(scroll, 1)
 
         # ── 底部 ──

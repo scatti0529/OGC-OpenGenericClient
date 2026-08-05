@@ -30,6 +30,7 @@ from core.database import (
 from services.download_manager import (
     get_download_root, PLATFORM_FOLDERS,
 )
+from services.media_item import MediaItem
 
 # ═══════════════════════════════════════════════════════════
 #  Pixiv App API 常量（与 pixivd-3.3 / PixivUtil2 一致）
@@ -770,4 +771,61 @@ def get_ranking_illustrations(downloader, mode='day', date=None, total_page=3):
     for index, i in enumerate(r):
         i['rank'] = index + 1
     return r
+
+
+# ═══════════════════════════════════════════════════════════
+#  Pixiv 网页链接解析器
+# ═══════════════════════════════════════════════════════════
+class PixivParser:
+    """Pixiv 插画/图片链接在线解析
+
+    通过 pixiv.net/ajax/illust/ 接口解析单条作品链接（图片/多图），
+    生成与聚合层一致的 MediaItem 列表。
+    """
+
+    def parse(self, url: str) -> list:
+        """解析 Pixiv 链接，返回 MediaItem 列表"""
+        # Pixiv 链接格式通常为 https://www.pixiv.net/artworks/{id}
+        match = re.search(r'pixiv\.net/(?:en/)?artworks/(\d+)', url)
+        if not match:
+            return []
+        artwork_id = match.group(1)
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.pixiv.net/',
+            }
+            resp = requests.get(f'https://www.pixiv.net/ajax/illust/{artwork_id}',
+                                headers=headers, timeout=15)
+            data = resp.json()
+            if data.get('error'):
+                return []
+            body = data['body']
+            title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', body.get('title', f'pixiv_{artwork_id}'))
+            if not title:
+                title = f'pixiv_{artwork_id}'
+            # 提取原始图片 URL
+            urls = body.get('urls', {})
+            items = []
+            original = urls.get('original', urls.get('regular', ''))
+            if original:
+                items.append(MediaItem(
+                    title=title,
+                    url=original,
+                    preview_url=urls.get('regular', original),
+                    media_type='image'
+                ))
+            # 多图作品
+            for i, page in enumerate(body.get('metaPages', [])[:10], start=2):
+                page_url = page.get('imageUrls', {}).get('original', '')
+                if page_url:
+                    items.append(MediaItem(
+                        title=f"{title}_{i}",
+                        url=page_url,
+                        preview_url=page.get('imageUrls', {}).get('regular', page_url),
+                        media_type='image'
+                    ))
+            return items
+        except Exception:
+            return []
 

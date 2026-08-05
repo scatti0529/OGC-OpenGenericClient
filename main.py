@@ -72,6 +72,65 @@ QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
 app = QApplication(sys.argv)
 
+
+# ── 修复 qfluentwidgets InfoBar 动画警告 ──────────────────────────────
+def _patch_qfluent_infobar_drop_animation():
+    """修复 qfluentwidgets 1.11.3 的 InfoBarManager 动画警告。
+
+    原问题：InfoBarManager.add() 在父窗口已有 InfoBar 时创建的 dropAni
+    只设置了 duration 而未设置 start/end value。当该动画随动画组启动时，
+    Qt 会警告：
+        QPropertyAnimation::updateState (pos, InfoBar, ): starting an animation without end value
+    推特等平台在解析/下载完成时连续弹出多个 InfoBar，最易触发。
+    """
+    try:
+        from qfluentwidgets.components.widgets.info_bar import InfoBarManager
+        from PyQt5.QtCore import QPropertyAnimation, QParallelAnimationGroup
+
+        def _patched_add(self, infoBar):
+            """与原始 add 逻辑一致，仅修复 dropAni 缺少 start/end value 的问题"""
+            p = infoBar.parent()
+            if not p:
+                return
+
+            if p not in self.infoBars:
+                p.installEventFilter(self)
+                self.infoBars[p] = []
+                self.aniGroups[p] = QParallelAnimationGroup(self)
+
+            if infoBar in self.infoBars[p]:
+                return
+
+            # add drop animation（补上 start/end value 避免 without end value 警告）
+            if self.infoBars[p]:
+                dropAni = QPropertyAnimation(infoBar, b'pos')
+                dropAni.setDuration(200)
+                dropAni.setStartValue(infoBar.pos())
+                dropAni.setEndValue(infoBar.pos())
+
+                self.aniGroups[p].addAnimation(dropAni)
+                self.dropAnis.append(dropAni)
+
+                infoBar.setProperty('dropAni', dropAni)
+
+            # add slide animation
+            self.infoBars[p].append(infoBar)
+            slideAni = self._createSlideAni(infoBar)
+            self.slideAnis.append(slideAni)
+
+            infoBar.setProperty('slideAni', slideAni)
+            infoBar.closedSignal.connect(lambda: self.remove(infoBar))
+
+            slideAni.start()
+
+        InfoBarManager.add = _patched_add
+        logger.info("已应用 InfoBar 动画补丁（修复 dropAni 缺少 end value 警告）")
+    except Exception as e:
+        logger.warning(f"InfoBar 动画补丁应用失败: {e}")
+
+
+_patch_qfluent_infobar_drop_animation()
+
 # ── 国际化 ──
 translator = FluentTranslator(QLocale())
 app.installTranslator(translator)

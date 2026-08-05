@@ -32,6 +32,7 @@ from pages.home_page import Home
 from pages.people_page import peopleInterface, IconCardView
 from pages.video.video_multiplatform_page import MultiPlatformVideoInterface, PlatformPage
 from pages.video.pixiv_page_ui import PixivPage
+from pages.video.douyin_page import DouyinPage
 from pages.music.music_page import MusicInterface
 from pages.dashboard_page import DashboardInterface
 
@@ -83,7 +84,7 @@ class Window(SplitFluentWindow):
         self.videoInterface      = MultiPlatformVideoInterface(self)
         self.videoInterface.setObjectName("视频")  # 添加这一行
         # 创建六个平台子模块页面
-        self.videoPage_douyin    = PlatformPage('douyin', '抖音', self)
+        self.videoPage_douyin    = DouyinPage(self)
         self.videoPage_douyin.setObjectName("抖音")
         self.videoPage_bilibili  = PlatformPage('bilibili', '哔哩哔哩', self)
         self.videoPage_bilibili.setObjectName("哔哩哔哩")

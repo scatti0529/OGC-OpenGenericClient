@@ -88,7 +88,7 @@ PLATFORM_FOLDERS = {
     'youtube': 'youtube-download',
 }
 
-SUBDIRS = ('images', 'videos', 'audios')
+SUBDIRS = ('images', 'videos', 'audios', 'sourcefiles')
 
 
 def get_download_root() -> str:

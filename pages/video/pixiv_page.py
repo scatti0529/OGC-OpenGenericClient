@@ -31,11 +31,12 @@ class PixivParseThread(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, mode, value, pages, parent=None):
+    def __init__(self, mode, value, pages, parent=None, entry=''):
         super().__init__(parent)
         self.mode = mode
         self.value = value
         self.pages = pages
+        self.entry = entry or value      # 用于回调识别具体条目
         self._downloader = PixivDownloader()
 
     def run(self):
