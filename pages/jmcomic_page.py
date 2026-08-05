@@ -1305,9 +1305,8 @@ class SettingsTab(QWidget):
         self.v.setSpacing(12)
         scroll.setWidget(content)
 
-        # 基本设置
+        # 基本设置（下载目录由视频模块统一下载目录体系管理：data/jmcomic-download）
         base_card = MetaCard("基本设置", self)
-        self._add_text(base_card, "download_dir", "下载目录", "漫画保存路径", browse=True)
         self._add_combo(base_card, "image_suffix", "图片格式", "下载图片的格式", [".jpg", ".png", ".webp"])
         self._add_combo(base_card, "client_type", "客户端类型", "api 兼容性好；html 效率高但限制 IP 地区",
                         ["api", "html"])

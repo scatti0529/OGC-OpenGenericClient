@@ -86,6 +86,7 @@ PLATFORM_FOLDERS = {
     'pixiv': 'pixiv-download',
     'xvideo': 'xvideo-download',
     'youtube': 'youtube-download',
+    'jmcomic': 'jmcomic-download',
 }
 
 SUBDIRS = ('images', 'videos', 'audios', 'sourcefiles')

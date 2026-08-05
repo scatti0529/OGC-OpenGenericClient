@@ -250,12 +250,22 @@ class JMConfigManager:
     # ---- 属性 ----
     @property
     def download_dir(self) -> Path:
-        dir_path = self.plugin_config.get("download_dir", "./jmcomic-download")
-        p = Path(dir_path)
-        if not p.is_absolute():
-            p = self.data_dir / p
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+        """获取下载目录（统一使用 services/download_manager 的 jmcomic-download 体系）"""
+        try:
+            # 接入视频模块统一下载目录：data/(video_download_root)/jmcomic-download
+            from services.download_manager import get_download_root
+            root = get_download_root()
+            p = Path(root) / "jmcomic-download"
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            # 回退到默认路径
+            dir_path = self.plugin_config.get("download_dir", "./jmcomic-download")
+            p = Path(dir_path)
+            if not p.is_absolute():
+                p = self.data_dir / p
+            p.mkdir(parents=True, exist_ok=True)
+            return p
 
     @property
     def image_suffix(self) -> str:
