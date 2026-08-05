@@ -950,17 +950,40 @@ class AccountTab(QWidget):
         self._clear_favorites()
 
     def _load_favorites(self):
+        """刷新收藏前先验证会话有效性，无效则自动重新登录"""
         status = self.service.auth.get_login_status()
         if not status["logged_in"]:
             show_error(self, "未登录", "请先登录后再查看收藏")
             return
+
+        self.refresh_btn.setEnabled(False)
+        self.service.ensure_valid_session(
+            on_done=self._on_session_checked,
+            on_error=self._on_session_check_error,
+        )
+
+    def _on_session_checked(self, result):
+        """会话检查完成：成功则继续加载收藏，失败则提示"""
+        success, message = result
+        if not success:
+            self.refresh_btn.setEnabled(True)
+            # 刷新登录状态显示
+            self._refresh_login_status()
+            show_error(self, "登录状态已失效", message)
+            return
+
+        # 会话有效，继续加载收藏
+        status = self.service.auth.get_login_status()
         client = self.service.auth.get_client()
         username = status.get("username") or ""
-        self.refresh_btn.setEnabled(False)
         self.service.get_favorites(
             client, self.current_page, "0", username,
             on_done=self._on_favorites_done, on_error=self._on_favorites_error,
         )
+
+    def _on_session_check_error(self, etype, emsg):
+        self.refresh_btn.setEnabled(True)
+        show_error(self, "会话验证失败", emsg)
 
     def _on_favorites_done(self, result):
         self.refresh_btn.setEnabled(True)
@@ -969,7 +992,12 @@ class AccountTab(QWidget):
 
     def _on_favorites_error(self, etype, emsg):
         self.refresh_btn.setEnabled(True)
-        show_error(self, "收藏获取失败", emsg)
+        # 收藏获取失败时检查是否是登录问题
+        if "登录" in str(emsg) or "未登录" in str(emsg) or "fav" in str(emsg).lower():
+            show_error(self, "收藏获取失败", "登录状态可能已失效，请重新登录")
+            self._refresh_login_status()
+        else:
+            show_error(self, "收藏获取失败", emsg)
 
     def _render_favorites(self, albums, folders):
         while self.fav_layout.count():

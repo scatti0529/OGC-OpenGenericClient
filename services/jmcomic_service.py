@@ -896,6 +896,71 @@ class JMAuthManager(JMClientMixin):
                 pass
         if username:
             self._username = username
+            logger.info(f"发现已保存的 JM 登录用户名: {username}（需要重新登录）")
+
+    def _validate_session_sync(self):
+        """同步验证当前会话是否有效（通过尝试获取用户信息）"""
+        try:
+            if not self._logged_in:
+                return False
+            client = self._build_client()
+            if client is None:
+                return False
+            # 尝试通过 API 验证会话有效性
+            # 访问 /user 端点获取用户信息，若失败则会话已过期
+            try:
+                resp = client.req_api("/user", params={})
+                data = resp.model_data
+                src = (
+                    data.src_dict
+                    if hasattr(data, "src_dict")
+                    else (data if isinstance(data, dict) else {})
+                )
+                # 如果响应中包含用户信息字段（如 username），说明会话有效
+                return bool(src.get("username")) or bool(src.get("id"))
+            except Exception:
+                # 某些客户端实现可能不同，尝试另一个端点
+                try:
+                    resp = client.req_api("/album", params={"id": "438428"})
+                    data = resp.model_data
+                    src = (
+                        data.src_dict
+                        if hasattr(data, "src_dict")
+                        else (data if isinstance(data, dict) else {})
+                    )
+                    # is_favorite 字段仅登录用户可见，若存在则说明会话有效
+                    return "is_favorite" in src or "likes" in src
+                except Exception:
+                    return False
+        except Exception:
+            return False
+
+    async def validate_session(self) -> bool:
+        """异步验证当前会话是否有效"""
+        if not self._logged_in:
+            return False
+        return await self._run_sync(self._validate_session_sync)
+
+    async def ensure_valid_session(self):
+        """确保会话有效，无效则尝试自动重新登录。
+
+        Returns:
+            (bool, str): (是否成功, 消息)
+        """
+        if self._logged_in:
+            valid = await self.validate_session()
+            if valid:
+                return True, f"已登录: {self._username}"
+
+            # 会话已过期，清除登录状态
+            logger.warning(f"JM 会话已过期，尝试自动重新登录: {self._username}")
+            self._logged_in = False
+
+        # 尝试使用配置的凭据自动登录
+        if self.config.has_credentials():
+            return await self.auto_login()
+
+        return False, "未登录或会话已过期，请重新登录"
 
     def _save_session(self, cookies=None):
         if not self._logged_in or not self._username:
@@ -927,6 +992,10 @@ class JMAuthManager(JMClientMixin):
         return self._username if self._logged_in else None
 
     def get_client(self):
+        """获取客户端：每次新建，避免并发操作共享同一已认证 client。
+
+        若已恢复登录状态（cookies 已注入 option），新建的 client 会自动带上登录态。
+        """
         return self._build_client()
 
     async def login(self, username: str, password: str) -> tuple[bool, str]:
@@ -977,8 +1046,13 @@ class JMAuthManager(JMClientMixin):
         return await self.login(self.config.jm_username, self.config.jm_password)
 
     async def ensure_logged_in(self):
+        """确保已登录（会验证会话有效性，无效则自动重新登录）"""
         if self._logged_in:
-            return True, f"已登录: {self._username}"
+            valid = await self.validate_session()
+            if valid:
+                return True, f"已登录: {self._username}"
+            logger.warning(f"JM 会话已过期，尝试自动重新登录: {self._username}")
+            self._logged_in = False
         if self.config.has_credentials():
             return await self.auto_login()
         return False, "未登录，请登录后使用"
@@ -1622,6 +1696,11 @@ class JMComicService(QObject):
     def login(self, username, password, on_done, on_error):
         self._record_usage('login', username)
         return self.submit(self.auth.login, username, password,
+                           on_done=on_done, on_error=on_error)
+
+    def ensure_valid_session(self, on_done, on_error):
+        """确保会话有效，无效则尝试自动重新登录"""
+        return self.submit(self.auth.ensure_valid_session,
                            on_done=on_done, on_error=on_error)
 
     def get_favorites(self, client, page, folder_id, username, on_done, on_error):
