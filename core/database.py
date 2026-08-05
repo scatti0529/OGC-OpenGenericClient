@@ -92,11 +92,41 @@ def get_default_permissions() -> dict:
     }
 
 
+def init_jmcomic_tables():
+    """初始化 JMComic 相关数据库表（配额 + 订阅）"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS download_quota (
+            user_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, date)
+        )''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS jm_subscriptions (
+            umo TEXT NOT NULL,
+            album_id TEXT NOT NULL,
+            user_id TEXT,
+            title TEXT,
+            last_count INTEGER DEFAULT 0,
+            PRIMARY KEY (umo, album_id)
+        )''')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def init_db():
     """初始化数据库"""
     logger = _get_logger()
     try:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        # 初始化 JMComic 表
+        try:
+            init_jmcomic_tables()
+        except Exception:
+            pass
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''

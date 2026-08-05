@@ -10,3 +10,7 @@ beautifulsoup4>=4.12.0
 pixivpy3>=3.7.5
 f2>=0.0.1.7
 pyyaml>=6.0
+jmcomic>=2.7.0
+pymupdf>=1.23.0
+pyzipper>=0.3.6
+pillow>=9.0.0

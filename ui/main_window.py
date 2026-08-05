@@ -29,7 +29,7 @@ from ui.widgets.glass_effect import glass_manager, FrostedPanel
 from pages.settings_page import SettingInterface, cfg, signalBus
 from pages.about_page import AboutMeInterface
 from pages.home_page import Home
-from pages.people_page import peopleInterface, IconCardView
+from pages.jmcomic_page import JmComicPage
 from pages.video.video_multiplatform_page import MultiPlatformVideoInterface, PlatformPage
 from pages.video.pixiv_page_ui import PixivPage
 from pages.video.douyin_page import DouyinPage
@@ -106,7 +106,7 @@ class Window(SplitFluentWindow):
             'youtube': self.videoPage_youtube,
         })
 
-        self.PeopleInterface     = peopleInterface(self)
+        self.PeopleInterface     = JmComicPage(self)
         self.PeopleInterface.setObjectName("人物")  # 添加这一行
         self.folderInterface     = Widget('Folder Interface', self)
         self.albumInterface      = Widget('Album Interface', self)
@@ -222,7 +222,7 @@ class Window(SplitFluentWindow):
             panel = self.navigationInterface.panel
             if hasattr(panel, '_onWidgetClicked'):
                 video_nav.clicked.connect(panel._onWidgetClicked)
-        self.addSubInterface(self.PeopleInterface,  FIF.PEOPLE, '人物')
+        self.addSubInterface(self.PeopleInterface,  FIF.PEOPLE, 'JMComic')
         self.navigationInterface.addSeparator()
         self.addSubInterface(self.albumInterface,  FIF.ALBUM, 'Albums', NavigationItemPosition.SCROLL)
         self.addSubInterface(self.albumInterface1, FIF.ALBUM, 'Album 1', parent=self.albumInterface)
