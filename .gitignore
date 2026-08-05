@@ -36,9 +36,34 @@ env/
 data/
 !data/.gitkeep
 
+# ===== 数据库文件（防泄露，不提交） =====
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+*.dbf
+*.bak.sqlite
+
+# ===== 凭据与配置文件（防泄露，不提交） =====
+*.cookies.json
+*cookies*.json
+*.token.json
+*credentials*.json
+*secret*.json
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+.env.*
+!.env.example
+
 # ===== 日志 =====
 logs/
 *.log
+*.log.*
 
 # ===== 媒体与下载内容 =====
 music/
