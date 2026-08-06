@@ -33,16 +33,15 @@ class ConfigManager:
 
         self.root = Path(sys.argv[0]).parent
         self.data = self.root / 'data'
-        self.videos = self.data / 'videos'
-        self.musics = self.data / 'musics'
-        self.temp_videos = self.data / 'temp_videos'
+        # self.videos = self.data / 'videos'
+        # self.musics = self.data / 'musics'
+        # self.temp_videos = self.data / 'temp_videos'
         self.music_dir = self.root / 'music'
         self.logs_dir = self.root / 'logs'
         self.cfg_file = self.data / 'config.json'
 
         # 创建必要的目录
-        for d in (self.data, self.videos, self.musics, self.temp_videos,
-                  self.music_dir, self.logs_dir):
+        for d in (self.data, self.logs_dir, self.music_dir):
             d.mkdir(parents=True, exist_ok=True)
 
         # 默认配置
@@ -56,8 +55,6 @@ class ConfigManager:
             'cursor': [],
             'delay': [50, 150],
             'save_path': str(self.data),
-            'video_save_path': str(self.root / 'videos'),
-            'temp_video_save_path': str(self.root / 'temp_videos'),
             'save_mode': 1,
             'xc': 5,
             'auto_backup': True,
@@ -65,10 +62,13 @@ class ConfigManager:
             # 日志路径配置
             'operation_log_path': str(self.logs_dir / 'operation.log'),
             'error_log_path': str(self.logs_dir / 'error.log'),
-            'music_cache_path': str(self.music_dir),
-            'music_download_path': str(self.music_dir),
             # 视频/多媒体下载根目录（默认 data 文件夹，可在设置中修改）
             'video_download_root': str(self.data),
+            # 兼容旧配置键（旧代码 video_page/settings_page 仍会引用，保持向后兼容）
+            'video_save_path': str(self.data / 'videos'),
+            'temp_video_save_path': str(self.data / 'temp_videos'),
+            'music_cache_path': str(self.music_dir),
+            'music_download_path': str(self.music_dir),
             # 下载优化配置
             'download_max_threads': 8,           # 并发分块下载线程数
             'download_parallel_threshold': 20,   # 大文件并发分块阈值 (MB)

@@ -425,6 +425,21 @@ class SettingInterface(ScrollArea):
         self.feedbackCard.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
 
+        # ── 其余设置卡片悬停功能简介 ──
+        install_hover_tip(self.musicFolderCard, "本地音乐库", "管理本地音乐文件夹，播放器自动扫描并索引其中的音乐文件")
+        install_hover_tip(self.downloadFolderCard, "下载目录", "设置音乐等资源的默认下载保存位置")
+        install_hover_tip(self.musicCacheFolderCard, "音乐缓存目录", "设置音乐播放缓存的存放位置")
+        install_hover_tip(self.musicDownloadFolderCard, "音乐下载目录", "设置音乐下载的保存位置")
+        install_hover_tip(self.videoDownloadRootCard, "视频下载根目录", "设置视频下载的根目录，各平台自动创建子文件夹")
+        install_hover_tip(self.themeColorCard, "主题颜色", "自定义应用的主题强调色")
+        install_hover_tip(self.blurRadiusCard, "云母模糊半径", "调整云母背景的模糊程度，半径越大越模糊")
+        install_hover_tip(self.operationLogCard, "操作日志路径", "设置操作日志的保存路径")
+        install_hover_tip(self.errorLogCard, "错误日志路径", "设置错误日志的保存路径")
+        install_hover_tip(self.updateOnStartUpCard, "启动检查更新", "开启后每次启动应用时自动检查是否有新版本")
+        install_hover_tip(self.helpCard, "帮助", "打开帮助页面，学习 PyQt-Fluent-Widgets 的使用技巧")
+        install_hover_tip(self.feedbackCard, "提供反馈", "打开反馈页面，帮助我们改进应用程序")
+        install_hover_tip(self.aboutCard, "关于", "查看应用版本信息并检查更新")
+
     def __onOperationLogCardClicked(self):
         """操作日志路径选择"""
         file_path, _ = QFileDialog.getSaveFileName(

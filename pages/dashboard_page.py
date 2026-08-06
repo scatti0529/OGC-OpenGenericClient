@@ -44,6 +44,7 @@ from ui.widgets.theme import (
     theme_color, text_tertiary, text_primary,
     on_theme_changed, ensure_theme_connected,
 )
+from ui.widgets.ui_utils import install_hover_tip
 
 
 # ═══════════════════════════════════════════════════════════
@@ -570,6 +571,12 @@ class DashboardInterface(QScrollArea):
         self.queryBtn.clicked.connect(self._update_usage_chart)
         usageHeader.addWidget(self.queryBtn)
         usageLayout.addLayout(usageHeader)
+
+        # ── 悬停功能简介 ──
+        install_hover_tip(self.refreshBtn, "刷新数据", "重新加载统计数据与用户列表")
+        install_hover_tip(self.startDateEdit, "开始日期", "统计起始日期，格式 YYYY-MM-DD，留空表示不限")
+        install_hover_tip(self.endDateEdit, "结束日期", "统计结束日期，格式 YYYY-MM-DD，留空表示不限")
+        install_hover_tip(self.queryBtn, "查询", "按所选日期范围刷新模块使用量统计图表")
 
         # 图表容器（柱状图 + 饼图）
         chartRow = QHBoxLayout()

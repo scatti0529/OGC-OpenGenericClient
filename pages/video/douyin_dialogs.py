@@ -16,6 +16,7 @@ from qfluentwidgets import (
 
 from core.config import config as CFG
 from ui.widgets.theme import theme_color
+from ui.widgets.ui_utils import install_hover_tip
 
 
 def show_info(parent, title, content, duration=3000):
@@ -229,6 +230,27 @@ class DouyinConfigDialog(QDialog):
         self.closeBtn.clicked.connect(self.close)
         bottomRow.addWidget(self.closeBtn)
         layout.addLayout(bottomRow)
+
+        # ── 抖音配置弹窗悬停功能简介（所有控件创建完成后安装）──
+        install_hover_tip(self.maxCountsSpin, "最大下载数", "设置单次任务最大下载视频数，0 表示不限")
+        install_hover_tip(self.forceSwitch, "强制重新下载", "忽略进度数据库记录，强制重新下载")
+        install_hover_tip(self.enableProgressSwitch, "启用进度记录", "启用后已下载的视频会记录到数据库，再次下载自动跳过")
+        install_hover_tip(self.saveMetadataSwitch, "保存元数据", "开启后每个视频额外保存封面/文案/原声/JSON")
+        install_hover_tip(self.saveCoverChk, "保存封面图", "保存视频封面图 (.jpg)")
+        install_hover_tip(self.saveDescChk, "保存文案", "保存视频文案全文 (.txt)")
+        install_hover_tip(self.saveMusicChk, "保存原声", "保存视频原声音频 (.mp3)")
+        install_hover_tip(self.saveJsonChk, "保存信息", "保存完整视频信息 JSON (.json)")
+        install_hover_tip(self.timeoutSpin, "请求超时", "HTTP 请求超时时间（5-120 秒）")
+        install_hover_tip(self.maxRetriesSpin, "API 最大重试", "API 请求失败的最大重试次数")
+        install_hover_tip(self.maxTasksSpin, "最大并发任务", "同时执行的下载任务数量（1-10）")
+        install_hover_tip(self.pageCountsSpin, "分页条数", "合集 API 分页每页条数（不建议超过 20，可能触发风控）")
+        install_hover_tip(self.apiIntervalSpin, "API 请求间隔", "API 请求之间的等待时间，防止触发风控")
+        install_hover_tip(self.mixIntervalSpin, "合集下载间隔", "合集内视频下载之间的间隔时间")
+        install_hover_tip(self.downloadRetriesSpin, "下载失败重试", "下载失败时的最大重试次数（0 表示不重试）")
+        install_hover_tip(self.retryIntervalSpin, "重试间隔", "下载失败后的重试间隔时间")
+        install_hover_tip(self.maxSpeedSpin, "最大下载速度", "最大下载速度（字节/秒），0 表示不限速；10MB/s = 10485760")
+        install_hover_tip(self.saveBtn, "保存配置", "保存当前所有抖音下载配置")
+        install_hover_tip(self.closeBtn, "关闭", "关闭配置弹窗")
 
     def _on_save(self):
         """保存配置到全局配置"""

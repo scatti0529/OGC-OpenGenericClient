@@ -25,6 +25,7 @@ from ui.widgets.theme import theme_color, text_primary, text_secondary
 
 # ── 默认头像 ──
 from core.resource_paths import ABOUT_DEFAULT_AVATAR as _DEFAULT_AVATAR
+from ui.widgets.ui_utils import install_hover_tip
 
 
 class EditableProfileCard(CardWidget):
@@ -91,6 +92,7 @@ class EditableProfileCard(CardWidget):
         self.editBtn.clicked.connect(self._parent_interface.toggleEdit if parent else None)
         self.editBtn.setFixedWidth(150)
         self.editBtn.setFixedHeight(36)
+        install_hover_tip(self.editBtn, "编辑资料", "进入编辑模式，可修改头像、用户名、签名、联系方式和资料信息")
         btnLayout.addWidget(self.editBtn)
 
         # 退出登录按钮（点击切换账号）
@@ -112,6 +114,7 @@ class EditableProfileCard(CardWidget):
             """)
         self.logoutBtn.setFixedSize(130, 36)
         self.logoutBtn.clicked.connect(self._on_logout_clicked)
+        install_hover_tip(self.logoutBtn, "退出登录", "退出当前账号并返回登录界面，可切换其他账号")
         btnLayout.addWidget(self.logoutBtn)
 
         btnLayout.addItem(QSpacerItem(20, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
@@ -119,6 +122,11 @@ class EditableProfileCard(CardWidget):
 
         infoLayout.addItem(QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addLayout(infoLayout)
+
+        # 头像悬停提示
+        install_hover_tip(self.avatar, "更换头像", "点击头像可更换为本地图片（支持 png/jpg/jpeg/bmp/gif）")
+        install_hover_tip(self.nameEdit, "编辑用户名", "输入新用户名（至少2个字符），管理员账号不可修改")
+        install_hover_tip(self.mottoEdit, "编辑签名", "输入你的个性签名")
 
     def _on_logout_clicked(self):
         """点击退出登录"""
@@ -349,12 +357,15 @@ class ContactSection(CardWidget):
         self.githubBtn = PrimaryPushButton(FIF.GITHUB, "GitHub")
         self.githubBtn.clicked.connect(self._openGithub)
         self.githubBtn.setFixedSize(120, 40)
+        install_hover_tip(self.githubBtn, "GitHub", "跳转到你设置的 GitHub 主页")
         self.emailBtn = PrimaryPushButton(FIF.MAIL, "Email")
         self.emailBtn.clicked.connect(self._openEmail)
         self.emailBtn.setFixedSize(120, 40)
+        install_hover_tip(self.emailBtn, "Email", "打开邮件客户端发送邮件到你的邮箱")
         self.qqBtn = PrimaryPushButton(FIF.PEOPLE, "QQ")
         self.qqBtn.clicked.connect(self._showQQ)
         self.qqBtn.setFixedSize(120, 40)
+        install_hover_tip(self.qqBtn, "QQ", "查看你的 QQ 号码")
 
         self.buttonsLayout.addWidget(self.githubBtn)
         self.buttonsLayout.addWidget(self.emailBtn)
@@ -534,16 +545,19 @@ class AboutMeInterface(QFrame):
         self.saveBtn.clicked.connect(self._saveProfile)
         self.saveBtn.setFixedWidth(150)
         self.saveBtn.setVisible(False)
+        install_hover_tip(self.saveBtn, "保存修改", "保存对个人资料所做的所有修改")
 
         self.cancelBtn = PushButton("取消")
         self.cancelBtn.clicked.connect(self._cancelEdit)
         self.cancelBtn.setFixedWidth(100)
         self.cancelBtn.setVisible(False)
+        install_hover_tip(self.cancelBtn, "取消", "取消编辑并恢复原始资料")
 
         self.changePwdBtn = PushButton("修改密码")
         self.changePwdBtn.clicked.connect(self._changePassword)
         self.changePwdBtn.setFixedWidth(120)
         self.changePwdBtn.setVisible(False)
+        install_hover_tip(self.changePwdBtn, "修改密码", "修改当前账号的登录密码（需输入旧密码验证）")
 
         self.actionLayout.addWidget(self.saveBtn)
         self.actionLayout.addWidget(self.cancelBtn)

@@ -127,16 +127,16 @@ class segmented_widget(QWidget):
             <h2 style="margin:0 0 4px 0; font-size:20px; font-weight:bold; color:#1E88E5;">📢 OGC-OpenGenericClient 正式上线公告</h2>
             <p style="margin:0 0 14px 0; font-size:12px; color:#909399;">2025-08-01 · 系统公告</p>
 
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">亲爱的用户：</p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">亲爱的用户：</p>
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 感谢您选择 <b>OGC-OpenGenericClient</b>！本工具致力于为您提供一站式的多媒体资源管理体验，
                 目前已集成 <b>音乐播放</b>、<b>多平台视频解析</b>、<b>人物资料库</b> 等核心功能。
             </p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 我们仍在持续优化产品体验，如您在使用过程中遇到任何问题，
                 欢迎前往「关于我」页面获取联系方式并提交反馈。
             </p>
-            <p style="margin:0 0 0 0; font-size:14px; line-height:1.8;">祝您使用愉快！</p>
+            <p style="margin:0 0 0 0; font-size:14px; line-height:1;">祝您使用愉快！</p>
             <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC-OpenGenericClient 开发团队</p>
         </div>
         """
@@ -149,23 +149,19 @@ class segmented_widget(QWidget):
             <p style="margin:0 0 14px 0; font-size:12px; color:#909399;">2025-07-15 · 更新日志</p>
 
             <p style="margin:0 0 6px 0; font-size:14px; font-weight:bold; color:#E6A23C;">✨ 新增功能</p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 • 新增音乐播放列表管理，支持本地音乐导入与在线试听<br>
                 • 新增多平台视频解析（抖音 / 微博 / B站）<br>
-                • 新增人物资料库卡片视图浏览模式
             </p>
 
             <p style="margin:0 0 6px 0; font-size:14px; font-weight:bold; color:#F56C6C;">🐛 问题修复</p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 • 修复部分视频解析超时导致程序无响应的问题<br>
-                • 修复深色主题下部分界面文字对比度不足的问题<br>
-                • 修复窗口最小化后导航栏状态显示异常的问题
             </p>
 
             <p style="margin:0 0 6px 0; font-size:14px; font-weight:bold; color:#67C23A;">📌 后续规划</p>
-            <p style="margin:0; font-size:14px; line-height:1.8;">
+            <p style="margin:0; font-size:14px; line-height:1;">
                 • 计划支持更多视频平台的解析<br>
-                • 持续优化音乐播放引擎的稳定性与音质
             </p>
         </div>
         """
@@ -176,20 +172,20 @@ class segmented_widget(QWidget):
         <div>
             <h2 style="margin:0 0 14px 0; font-size:20px; font-weight:bold; color:#1E88E5;">关于 OGC-OpenGenericClient</h2>
 
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 <b>版本：</b>v1.2.0
             </p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 <b>作者：</b>OGC-OpenGenericClient 开发团队
             </p>
-            <p style="margin:0 0 8px 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 8px 0; font-size:14px; line-height:1;">
                 <b>开源协议：</b>MIT License
             </p>
-            <p style="margin:0 0 0 0; font-size:14px; line-height:1.8;">
+            <p style="margin:0 0 0 0; font-size:14px; line-height:1;">
                 OGC-OpenGenericClient 是一款基于 <b>PyQt5</b> 与 <b>PyQt-Fluent-Widgets</b> 构建的多功能桌面应用，
                 集成了音乐播放、多平台视频解析、人物资料管理等功能，采用现代化 Fluent Design 风格界面。
             </p>
-            <p style="margin:12px 0 0 0; font-size:14px; line-height:1.8;">
+            <p style="margin:12px 0 0 0; font-size:14px; line-height:1;">
                 如您在使用过程中遇到任何问题，或有功能建议，欢迎提交反馈，帮助我们持续改进！
             </p>
             <p style="margin:12px 0 0 0; font-size:14px; color:#606266;">—— OGC-OpenGenericClient 开发团队</p>

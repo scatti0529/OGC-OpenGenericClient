@@ -25,6 +25,7 @@ from core.database import (
 )
 from services.pixiv_service import PixivDownloader, LoginRequiredError
 from ui.widgets.theme import theme_color
+from ui.widgets.ui_utils import install_hover_tip
 
 
 def show_info(parent, title, content, duration=3000):
@@ -276,6 +277,32 @@ class PixivConfigDialog(QDialog):
         bottomRow.addWidget(self.closeBtn)
         layout.addLayout(bottomRow)
 
+        # ── Pixiv 配置弹窗悬停功能简介（所有控件创建完成后安装）──
+        install_hover_tip(self.tokenEdit, "Refresh Token", "粘贴 Pixiv Refresh Token，或点击下方按钮自动获取")
+        install_hover_tip(self.getTokenBtn, "获取 Refresh Token", "打开 Pixiv 授权页面并获取 Refresh Token")
+        install_hover_tip(self.saveTokenBtn, "保存到数据库", "验证并保存 Refresh Token 到数据库")
+        install_hover_tip(self.codeEdit, "授权 code", "粘贴浏览器回调地址或授权 code 完成网页登录")
+        install_hover_tip(self.completeLoginBtn, "完成登录", "使用授权 code 完成登录并保存 Token")
+        install_hover_tip(self.imagesPerDownload, "一次性下载图片数", "一次解析/下载任务最多下载的图片张数，0 表示不限")
+        install_hover_tip(self.crawlPages, "抓取的页数", "标签搜索/收藏/排行榜等抓取的页数（每页约 30 张）")
+        install_hover_tip(self.maxPosts, "最大帖子数", "按画师 ID 下载时最多下载的作品数，0 表示不限")
+        install_hover_tip(self.maxImages, "最大抓取图片数", "最大抓取图片数，0 表示不限")
+        install_hover_tip(self.tagLangCombo, "标签语言", "下载时使用的标签语言（日文/翻译/原语言）")
+        install_hover_tip(self.updateExistingSwitch, "更新已存在文件夹", "开启后重新下载并更新已存在的画师文件夹")
+        install_hover_tip(self.skipMangaSwitch, "跳过漫画", "开启后跳过漫画类型的作品，仅下载插画")
+        install_hover_tip(self.fastUpdateSwitch, "快速更新", "快速模式跳过检查，更新已存在文件夹时更快")
+        install_hover_tip(self.metadataSwitch, "获取作者详细信息", "为每个作品获取并保存作者详细信息")
+        install_hover_tip(self.metadataBookmarkSwitch, "获取收藏信息", "获取并保存作品的收藏信息")
+        install_hover_tip(self.commentsSwitch, "下载评论区", "下载并保存作品的评论区内容")
+        install_hover_tip(self.captionsSwitch, "下载作品说明", "下载并保存作品的说明文字")
+        install_hover_tip(self.relatedSwitch, "相关作品", "下载与当前作品相关的作品")
+        install_hover_tip(self.coversSwitch, "小说封面", "下载小说作品的封面图片")
+        install_hover_tip(self.ugoiraCombo, "动图 (Ugoira)", "设置动图作品的下载方式（True/original/False）")
+        install_hover_tip(self.updateExistBtn, "更新已有文件夹", "更新已存在的画师文件夹中的作品")
+        install_hover_tip(self.removeRepeatBtn, "删除重复图片", "检查并删除本地重复的图片文件")
+        install_hover_tip(self.saveBtn, "保存配置", "保存当前所有 Pixiv 配置")
+        install_hover_tip(self.closeBtn, "关闭", "关闭配置弹窗")
+
     # ---- 日志 ----
     def _on_log(self, msg):
         self._log_text.append(str(msg))
@@ -478,6 +505,15 @@ class PixivFeatureDialog(QDialog):
         self.closeBtn.clicked.connect(self.close)
         bottomRow.addWidget(self.closeBtn)
         layout.addLayout(bottomRow)
+
+        # ── Pixiv 功能清单弹窗悬停提示 ──
+        install_hover_tip(self.sanitySwitch, "安全过滤绕过", "对需要 R-18 确认的作品启用默认绕过")
+        install_hover_tip(self.includeEntry, "包含条目", "额外包含的内容（如 sketch = 草稿，all = 全部）")
+        install_hover_tip(self.embedsSwitch, "嵌入内容", "获取小说中嵌入的图片/视频")
+        install_hover_tip(self.noSkipSwitch, "覆盖已存在文件", "不跳过已下载的重复文件（强制重新下载）")
+        install_hover_tip(self.metadataJsonSwitch, "写元数据 JSON", "为每个文件生成 .json 元数据文件")
+        install_hover_tip(self.saveBtn, "保存设置", "保存功能清单设置")
+        install_hover_tip(self.closeBtn, "关闭", "关闭功能清单弹窗")
 
     def _on_save(self):
         """保存功能清单设置"""

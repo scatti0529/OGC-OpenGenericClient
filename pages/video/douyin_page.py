@@ -30,6 +30,7 @@ from pages.video.douyin_dialogs import (
 )
 from core.config import config as CFG
 from ui.widgets.theme import theme_color
+from ui.widgets.ui_utils import install_hover_tip
 
 
 def extract_urls(text: str) -> list:
@@ -416,6 +417,16 @@ class DouyinPage(QScrollArea):
             funcRow.addWidget(btn)
         funcRow.addStretch()
         inputLayout.addLayout(funcRow)
+
+        # ── 抖音页面悬停功能简介 ──
+        install_hover_tip(self.urlEdit, "链接输入", "粘贴抖音分享链接或完整分享文本，支持多条链接")
+        install_hover_tip(self.pasteBtn, "粘贴", "清空输入框并粘贴剪贴板中的链接")
+        install_hover_tip(self.appendBtn, "追加粘贴", "在输入框末尾追加粘贴剪贴板内容")
+        install_hover_tip(self.parseBtn, "解析", "解析输入框中的链接，生成媒体卡片列表")
+        install_hover_tip(self.configBtn, "配置", "打开抖音下载配置弹窗（下载/元数据/网络等）")
+        install_hover_tip(self.featureBtn, "功能清单", "查看 douyinDL 支持的全部功能说明")
+        install_hover_tip(self.logBtn, "下载日志", "打开下载日志弹窗，查看下载过程")
+        install_hover_tip(self.retryBtn, "重试失败记录", "重试数据库中记录的失败下载任务")
 
         self.dirLabel = CaptionLabel(self._dir_hint(), inputCard)
         self.dirLabel.setStyleSheet(

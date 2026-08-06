@@ -41,6 +41,7 @@ from core.resource_paths import (
     VIDEO_LOGO as _ICON_LOGO,
 )
 from ui.widgets.theme import theme_color, on_theme_changed, ensure_theme_connected
+from ui.widgets.ui_utils import install_hover_tip
 
 
 # ═══════════════════════════════════════════════════════════
@@ -572,6 +573,13 @@ class PlatformPage(QScrollArea):
         self.sessdataRow.addWidget(self.sessdataEdit, 1)
         self.sessdataWidget.setVisible(platform == 'bilibili')
         inputLayout.addWidget(self.sessdataWidget)
+
+        # ── 平台页面悬停功能简介 ──
+        install_hover_tip(self.urlEdit, "链接输入", f"输入{display_name}分享链接，支持多条（回车或英文逗号分隔）")
+        install_hover_tip(self.pasteBtn, "粘贴", "清空输入框并粘贴剪贴板中的链接")
+        install_hover_tip(self.appendBtn, "追加粘贴", "在输入框末尾追加粘贴剪贴板内容")
+        install_hover_tip(self.parseBtn, "解析", "解析输入框中的链接，生成媒体卡片列表")
+        install_hover_tip(self.sessdataWidget, "SESSDATA", "输入哔哩哔哩登录凭证（可选），可获取高清画质")
 
         # 下载目录提示（动态读取配置，设置修改后自动同步）
         self.dirLabel = CaptionLabel(self._dir_hint(), inputCard)

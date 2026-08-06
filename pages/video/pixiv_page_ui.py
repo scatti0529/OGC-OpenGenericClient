@@ -22,6 +22,7 @@ from pages.video.pixiv_dialogs import (
     PixivConfigDialog, PixivFeatureDialog,
     show_error, show_info, show_success,
 )
+from ui.widgets.ui_utils import install_hover_tip
 
 
 class PixivPage(QScrollArea):
@@ -145,6 +146,25 @@ class PixivPage(QScrollArea):
             "color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 12px;")
         self.dirLabel.setWordWrap(True)
         inputLayout.addWidget(self.dirLabel)
+
+        # ── Pixiv 页面悬停功能简介 ──
+        install_hover_tip(self.urlEdit, "输入内容", "输入 Pixiv 链接/画师ID/作品ID/标签/日期(YYYY-MM-DD)")
+        install_hover_tip(self.pasteBtn, "粘贴", "清空输入框并粘贴剪贴板内容")
+        install_hover_tip(self.appendBtn, "追加粘贴", "在输入框末尾追加粘贴剪贴板内容")
+        install_hover_tip(self.parseBtn, "解析", "按所选模式解析输入内容，生成作品卡片列表")
+        install_hover_tip(self.batchBtn, "批量下载", "将当前所有作品卡片加入下载队列")
+        install_hover_tip(self.configBtn, "配置", "打开 Pixiv 配置与登录弹窗")
+        install_hover_tip(self.featureBtn, "功能清单", "查看 Pixiv 下载器功能开关说明")
+        for rb in self.radio_group:
+            mode_tip = {
+                'artist': '按画师 ID 下载该画师的全部作品',
+                'illust': '按作品 ID 下载指定作品',
+                'tag': '按标签搜索并下载相关作品',
+                'ranking': '下载今日排行榜作品',
+                'bookmarks': '下载当前账号收藏的作品',
+                'history_ranking': '按日期下载历史排行榜作品（格式 YYYY-MM-DD）',
+            }.get(rb.property('mode'), '选择解析模式')
+            install_hover_tip(rb, rb.text(), mode_tip)
 
         self.layout.addWidget(inputCard)
 

@@ -34,6 +34,7 @@ from services.jmcomic_service import (
     CATEGORY_LIST, ORDER_LIST, TIME_LIST, PACK_FORMATS,
     SEARCH_MODES, RANK_TYPES, JM_DEFAULTS,
 )
+from ui.widgets.ui_utils import install_hover_tip
 
 
 # ═══════════════════════════════════════════════════════════
@@ -207,6 +208,10 @@ class AlbumDetailDialog(QDialog):
         bottom_row.addWidget(self.download_btn)
         self.root.addLayout(bottom_row)
 
+        # ── 悬停功能简介 ──
+        install_hover_tip(self.chapter_combo, "章节选择", "选择下载全部章节或指定章节")
+        install_hover_tip(self.download_btn, "下载", "下载所选章节的本子内容")
+
     def _load_detail(self):
         if not JMCOMIC_AVAILABLE:
             show_error(self, "jmcomic 库未安装", "请先安装 jmcomic 以查看详情")
@@ -302,14 +307,17 @@ class SearchTab(QWidget):
         for mode_id, mode_name in SEARCH_MODES:
             self.mode_combo.addItem(mode_name, userData=mode_id)
         self.mode_combo.setFixedWidth(100)
+        self.mode_combo.setToolTip("选择搜索维度：综合/标签/作者/角色/作品")
         row.addWidget(self.mode_combo)
 
         self.search_edit = LineEdit(self)
         self.search_edit.setPlaceholderText("输入关键词，支持标签/作者/角色/作品搜索...")
+        self.search_edit.setToolTip("输入关键词后回车或点击搜索按钮开始搜索")
         self.search_edit.returnPressed.connect(self._do_search)
         row.addWidget(self.search_edit, 1)
 
         self.search_btn = PrimaryPushButton(FIF.SEARCH, "搜索", self)
+        self.search_btn.setToolTip("点击开始搜索漫画")
         self.search_btn.clicked.connect(self._do_search)
         row.addWidget(self.search_btn)
         search_card.v_layout.addLayout(row)
@@ -323,15 +331,18 @@ class SearchTab(QWidget):
         self.rank_type_combo = ComboBox(self)
         for rid, rname in RANK_TYPES:
             self.rank_type_combo.addItem(rname, userData=rid)
+        self.rank_type_combo.setToolTip("选择要查看的排行榜类型：日榜/周榜/月榜")
         brow.addWidget(self.rank_type_combo)
 
         brow.addWidget(BodyLabel("分类:", self))
         self.rank_cat_combo = ComboBox(self)
         for cid, cname in CATEGORY_LIST:
             self.rank_cat_combo.addItem(cname, userData=cid)
+        self.rank_cat_combo.setToolTip("选择漫画分类（同人/单本/短篇/韩漫等）")
         brow.addWidget(self.rank_cat_combo)
 
         rank_btn = PushButton(FIF.ALBUM, "查看榜单", self)
+        rank_btn.setToolTip("获取所选分类和榜单类型的漫画排行列表")
         rank_btn.clicked.connect(self._load_ranking)
         brow.addWidget(rank_btn)
 
@@ -340,15 +351,18 @@ class SearchTab(QWidget):
         self.order_combo = ComboBox(self)
         for oid, oname in ORDER_LIST:
             self.order_combo.addItem(oname, userData=oid)
+        self.order_combo.setToolTip("选择推荐内容的排序方式（热门/最新/图多/点赞）")
         brow.addWidget(self.order_combo)
 
         brow.addWidget(BodyLabel("时间:", self))
         self.time_combo = ComboBox(self)
         for tid, tname in TIME_LIST:
             self.time_combo.addItem(tname, userData=tid)
+        self.time_combo.setToolTip("选择推荐内容的时间范围（本周/今日/本月/全部）")
         brow.addWidget(self.time_combo)
 
         rec_btn = PushButton(FIF.ALBUM, "推荐浏览", self)
+        rec_btn.setToolTip("根据所选分类/排序/时间条件获取推荐漫画")
         rec_btn.clicked.connect(self._load_recommend)
         brow.addWidget(rec_btn)
         brow.addStretch(1)
@@ -374,12 +388,24 @@ class SearchTab(QWidget):
         # 分页
         page_row = QHBoxLayout()
         self.prev_btn = PushButton("◀ 上一页", self)
+        self.prev_btn.setToolTip("翻到上一页搜索结果")
         self.prev_btn.clicked.connect(self._prev_page)
         self.prev_btn.setEnabled(False)
         self.next_btn = PushButton("下一页 ▶", self)
+        self.next_btn.setToolTip("翻到下一页搜索结果")
         self.next_btn.clicked.connect(self._next_page)
         self.next_btn.setEnabled(False)
         self.page_label = BodyLabel("第 1 页", self)
+        # 其余搜索相关悬停提示
+        install_hover_tip(self.mode_combo, "搜索模式", "选择搜索维度：综合/标签/作者/角色/作品")
+        install_hover_tip(self.search_edit, "关键词输入", "输入关键词后回车或点击搜索按钮开始搜索")
+        install_hover_tip(self.search_btn, "搜索", "点击开始搜索漫画")
+        install_hover_tip(self.rank_type_combo, "榜单类型", "选择要查看的排行榜类型：日榜/周榜/月榜")
+        install_hover_tip(self.rank_cat_combo, "漫画分类", "选择漫画分类（同人/单本/短篇/韩漫等）")
+        install_hover_tip(self.order_combo, "排序方式", "选择推荐内容的排序方式（热门/最新/图多/点赞）")
+        install_hover_tip(self.time_combo, "时间范围", "选择推荐内容的时间范围（本周/今日/本月/全部）")
+        install_hover_tip(self.prev_btn, "上一页", "翻到上一页搜索结果")
+        install_hover_tip(self.next_btn, "下一页", "翻到下一页搜索结果")
         page_row.addStretch(1)
         page_row.addWidget(self.prev_btn)
         page_row.addWidget(self.page_label)
@@ -624,6 +650,14 @@ class DownloadTab(QWidget):
         pack_row.addStretch(1)
         pack_card.v_layout.addLayout(pack_row)
         self.root.addWidget(pack_card)
+
+        # ── 下载/打包悬停提示 ──
+        install_hover_tip(self.album_edit, "本子ID", "输入要下载的本子 ID，例如 123456")
+        install_hover_tip(self.chapter_combo, "章节选择", "选择下载全部章节或指定章节")
+        install_hover_tip(self.download_btn, "开始下载", "开始下载本子并自动打包")
+        install_hover_tip(self.pack_combo, "打包格式", "选择下载完成后的打包格式（ZIP/PDF/长图/不打包）")
+        install_hover_tip(self.pass_edit, "打包密码", "设置压缩包加密密码，留空表示不加密")
+        install_hover_tip(self.show_pw_check, "文件名显示密码", "开启后在文件名末尾添加 #PW 密码提示")
 
         # 进度区
         self.progress_card = MetaCard("下载进度", self)
@@ -897,6 +931,15 @@ class AccountTab(QWidget):
         self.root.addWidget(fav_card)
         self.root.addStretch(1)
 
+        # ── 账号/收藏悬停提示 ──
+        install_hover_tip(self.username_edit, "JM 用户名", "输入 JM 账号用户名")
+        install_hover_tip(self.password_edit, "JM 密码", "输入 JM 账号密码")
+        install_hover_tip(self.login_btn, "登录", "登录 JM 账号以使用收藏与下载功能")
+        install_hover_tip(self.logout_btn, "登出", "退出当前 JM 账号")
+        install_hover_tip(self.refresh_btn, "刷新收藏", "重新加载当前账号的收藏列表")
+        install_hover_tip(self.prev_btn, "上一页", "翻到上一页收藏")
+        install_hover_tip(self.next_btn, "下一页", "翻到下一页收藏")
+
         self._refresh_login_status()
 
     def _refresh_login_status(self):
@@ -1098,10 +1141,13 @@ class SubscriptionCard(MetaCard):
         btn_row = QHBoxLayout()
         self.update_btn = PushButton(FIF.DOWNLOAD, "下载更新", self)
         self.update_btn.clicked.connect(self._on_update)
+        # 悬停提示
+        install_hover_tip(self.update_btn, "下载更新", "下载订阅本子新增的章节（跳过已下载）")
         btn_row.addWidget(self.update_btn)
 
         self.delete_btn = PushButton(FIF.DELETE, "取消订阅", self)
         self.delete_btn.clicked.connect(self._on_delete)
+        install_hover_tip(self.delete_btn, "取消订阅", "取消订阅该本子")
         btn_row.addWidget(self.delete_btn)
 
         btn_row.addStretch(1)
@@ -1157,6 +1203,11 @@ class SubscribeTab(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_card.v_layout.addWidget(self.scroll)
+
+        # ── 订阅悬停提示 ──
+        install_hover_tip(self.album_edit, "本子ID", "输入要订阅的本子 ID，例如 123456")
+        install_hover_tip(self.subscribe_btn, "订阅", "订阅指定本子，自动跟踪新章节更新")
+        install_hover_tip(self.refresh_btn, "刷新", "刷新当前订阅列表")
 
         self.scroll_content = QWidget()
         self.list_layout = QVBoxLayout(self.scroll_content)
@@ -1365,6 +1416,12 @@ class SettingsTab(QWidget):
         self.v.addLayout(btn_row)
         self.v.addStretch(1)
 
+        # ── 设置页悬停提示 ──
+        install_hover_tip(self.save_btn, "保存设置", "保存当前所有 JMComic 配置")
+        install_hover_tip(self.reset_btn, "恢复默认", "恢复所有设置为默认值（需确认）")
+        for row in self._rows:
+            install_hover_tip(row._control, row.title_label.text(), row.desc_label.text())
+
     # ---------- 控件创建 ----------
     def _add_text(self, card, key, title, desc, browse=False, password=False):
         row = SettingRow(key, title, desc, card)
@@ -1507,7 +1564,7 @@ class JmComicPage(QWidget):
         # 页面标题
         header = QWidget(self)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(24, 16, 24, 8)
+        header_layout.setContentsMargins(24, 36, 24, 8)
 
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
