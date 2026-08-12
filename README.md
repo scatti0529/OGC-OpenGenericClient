@@ -16,12 +16,21 @@
 ### 🎬 视频模块（多平台）
 | 平台 | 支持内容 |
 |------|---------|
-| 抖音 | 视频/图集下载 |
+| 抖音 | 视频/图集下载、多清晰度选择、用户主页批量解析、二维码扫码登录获取 Cookie |
 | 哔哩哔哩 | 多 P 视频（分 P 下载、画质选择、音视频合并） |
 | 推特/X | 视频/图片下载 |
 | Pixiv | 插画/动图下载 |
 | Xvideo | 视频下载（M3U8 解析） |
 | YouTube | 视频多画质下载 |
+
+**抖音模块特性（移植自 douyin_parse-master v2.0.4）：**
+- 🔏 **A-Bogus / X-Bogus 双通道签名**（自动选择可用通道，需 `gmssl` 依赖）
+- 🎴 **卡片式结果区**（封面预览异步加载、清晰度/图集预览）
+- 🔗 **多链接并发解析**（最大并发 2，队列管理）+ 用户主页批量抓取
+- 🎚️ **多清晰度下载**（1080p / 720p / 540p / 480p / 360p，自动选择最高画质）
+- 🖼️ **图集下载**（含 Live 动图 / GIF，自动归类 `images/`）
+- 📋 **Cookie 管理**（手动粘贴 / 二维码扫码登录，保存至 `douyin_cookie.txt`）
+- 📊 **下载队列与断点状态**（完成/失败自动续下一个，进度入库 `douyin_downloads`）
 
 **下载引擎特性：**
 - 🚀 自适应下载模式（自动选择最优方案）
@@ -89,6 +98,7 @@ python main.py
 | 网页解析 | beautifulsoup4 |
 | 数据存储 | SQLite（内置 `sqlite3`） |
 | 媒体处理 | ffmpeg（音视频合并，可选） |
+| 抖音签名 | gmssl（A-Bogus / X-Bogus 生成） |
 
 ## 📂 项目结构
 
@@ -108,15 +118,17 @@ OGC-OpenGenericClient/
 ├── pages/                      # 功能页面
 │   ├── home_page.py            # 首页
 │   ├── music/                  # 音乐模块（搜索/歌单/播放器）
-│   ├── video/                  # 视频模块（多平台）
-│   ├── people_page.py          # 人物模块
-│   ├── settings_page.py        # 设置页
+│   ├── video/                  # 视频模块（多平台，含抖音、JMComic）
+│   ├── jmcomic_page.py         # 漫画下载页（JMComic）
 │   ├── about_page.py           # 关于我（个人资料）
-│   └── dashboard_page.py       # 仪表盘（管理员）
+│   ├── dashboard_page.py       # 仪表盘（管理员）
+│   └── settings_page.py        # 设置页
 ├── services/                   # 业务服务层
 │   ├── download_manager.py     # 自适应下载引擎
 │   ├── downloader.py           # 下载线程封装
 │   ├── netease_music.py        # 网易云音乐 API
+│   ├── douyin_parser.py        # 抖音解析核心（A-Bogus / X-Bogus 签名）
+│   ├── douyin/                 # 抖音签名算法库（abogus / xbogus）
 │   └── platform_parsers.py     # 多平台链接解析
 ├── resources/                  # 资源文件（图标/字体/翻译/样式）
 └── scripts/                    # 开发/测试脚本
@@ -126,8 +138,8 @@ OGC-OpenGenericClient/
 
 程序内置管理员账号 **`admin`**（注册时默认创建），拥有全部权限，可访问**仪表盘**进行用户管理。普通用户在注册后默认拥有全部模块权限，管理员可在仪表盘中为每个用户单独配置：
 
-- **模块权限**：首页 / 音乐 / 视频 / 人物 / 设置 / 关于我
-- **功能权限**：音乐搜索 / 歌单解析 / 音乐下载 / 播放器、各视频平台开关等
+- **模块权限**：首页 / 音乐 / 视频 / 人物 / 关于我 / 设置 / 仪表盘
+- **功能权限**：音乐搜索 / 歌单解析 / 音乐下载 / 播放器、各视频平台开关、JMComic 搜索/下载/账号/订阅等
 
 ## 📝 免责声明
 

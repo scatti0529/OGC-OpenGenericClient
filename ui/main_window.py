@@ -266,13 +266,14 @@ class Window(SplitFluentWindow):
             self.about_me.loadUserProfile(username)
 
         try:
-            # 是否管理员 —— 仅用户名为 admin 时显示仪表盘
-            is_admin_user = (username == 'admin')
-            if hasattr(self, '_dashboard_nav_item'):
-                self._dashboard_nav_item.setVisible(is_admin_user)
-
             # 根据用户权限控制各导航项显示
             perms = get_user_permissions(username)
+            # 是否管理员（admin 始终可访问仪表盘）；普通用户需授予 dashboard 模块权限
+            is_admin_user = (username == 'admin')
+            if hasattr(self, '_dashboard_nav_item'):
+                dashboard_allowed = is_admin_user or perms.get('modules', {}).get('dashboard', False)
+                self._dashboard_nav_item.setVisible(dashboard_allowed)
+
             # 导航项 objectName -> 权限模块 key
             module_map = {
                 '首页': 'home',

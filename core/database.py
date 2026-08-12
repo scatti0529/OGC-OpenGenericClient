@@ -67,6 +67,7 @@ ALL_MODULES = [
     ('people', '人物'),
     ('about_me', '关于我'),
     ('settings', '设置'),
+    ('dashboard', '仪表盘'),
 ]
 
 # 所有可用功能（模块下的具体功能）

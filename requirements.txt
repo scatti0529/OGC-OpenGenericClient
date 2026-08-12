@@ -9,6 +9,7 @@ aiofiles>=23.2.0
 beautifulsoup4>=4.12.0
 pixivpy3>=3.7.5
 f2>=0.0.1.7
+gmssl>=3.2.2
 pyyaml>=6.0
 jmcomic>=2.7.0
 pymupdf>=1.23.0

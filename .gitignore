@@ -59,6 +59,9 @@ data/
 *.jks
 .env.*
 !.env.example
+douyin_cookie.txt
+*toutiao_cookie.txt
+*xhs_cookie.txt
 
 # ===== 日志 =====
 logs/
