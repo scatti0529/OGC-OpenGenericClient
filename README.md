@@ -21,7 +21,7 @@
 | 推特/X | 视频/图片下载 |
 | Pixiv | 插画/动图下载 |
 | Xvideo | 视频下载（M3U8 解析） |
-| YouTube | 视频多画质下载 |
+| YouTube(失效) | 视频多画质下载 |
 
 **抖音模块特性（移植自 douyin_parse-master v2.0.4）：**
 - 🔏 **A-Bogus / X-Bogus 双通道签名**（自动选择可用通道，需 `gmssl` 依赖）
