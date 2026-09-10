@@ -61,6 +61,14 @@ except Exception as e:
     logger.error(f"加载玻璃效果配置失败: {e}")
 
 # ── Qt 高 DPI 设置 ──
+# 静默无害的 Qt「default」分类警告（无类别 qWarning）：
+# 1) "OpenType support missing for ..." —— 渲染日文（片假名）/泰卢固文等文字时，
+#    系统字体（微软雅黑/宋体/Arial 等）缺少对应 OpenType 表产生的提示，纯属噪音；
+# 2) 退出瞬间个别后台线程尚未结束时的 "QThread: Destroyed while thread is still running"，
+#    线程对象已在各模块 closeEvent 中安全回收，退出期残留属正常收尾。
+# 仅关闭 default 分类的 warning 级别，不影响其他 Qt 输出。
+os.environ.setdefault('QT_LOGGING_RULES', 'default.warning=false')
+
 from PyQt5.QtCore import Qt, QLocale
 from PyQt5.QtWidgets import QApplication
 from qfluentwidgets import FluentTranslator
@@ -71,6 +79,14 @@ QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
 QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
 app = QApplication(sys.argv)
+
+# ── 全局线程看门狗：拦截所有 QThread.start，退出前统一 requestInterruption + wait，防止 QThread destroyed 闪退 ──
+try:
+    import core.thread_guard as _thread_guard
+    _thread_guard_shutdown = _thread_guard.shutdown
+    app.aboutToQuit.connect(_thread_guard_shutdown)
+except Exception as _e:
+    pass
 
 
 # ── 修复 qfluentwidgets InfoBar 动画警告 ──────────────────────────────
@@ -131,6 +147,45 @@ def _patch_qfluent_infobar_drop_animation():
 
 _patch_qfluent_infobar_drop_animation()
 
+
+# ── 过滤 qfluentwidgets 动画目标已销毁的良性警告 ──────────────────────
+def _install_animation_warning_filter():
+    """过滤 QPropertyAnimation 目标已销毁时的 Qt 警告。
+
+    qfluentwidgets 的 Flyout / InfoBar / Menu 等组件在动画进行中，
+    目标控件可能因页面切换 / 窗口关闭而被销毁，Qt 会打印：
+        QPropertyAnimation::updateState (pos): Changing state of an animation without target
+        QPropertyAnimation::updateState (windowOpacity): Changing state of an animation without target
+    这类警告无害（动画自然中止），但会刷屏；这里安装 Qt 消息处理器将其静默，
+    其余消息按默认方式输出（PyQt5 未暴露 qDefaultMessageHandler，用 qFormatLogMessage 格式化后写 stderr）。
+    """
+    import sys as _sys
+
+    try:
+        from PyQt5.QtCore import (
+            QtMsgType, qInstallMessageHandler, qFormatLogMessage,
+        )
+
+        def _handler(msgType, context, message):
+            text = message if isinstance(message, str) else str(message)
+            if 'QPropertyAnimation::updateState' in text and \
+                    'Changing state of an animation without target' in text:
+                return  # 静默：动画目标已销毁属预期行为
+            try:
+                formatted = qFormatLogMessage(msgType, context, message)
+                _sys.stderr.write(formatted)
+                _sys.stderr.flush()
+            except Exception:
+                _sys.stderr.write(text + "\n")
+
+        qInstallMessageHandler(_handler)
+        logger.info("已应用动画警告过滤器（静默 QPropertyAnimation without target）")
+    except Exception as e:
+        logger.warning(f"动画警告过滤器应用失败: {e}")
+
+
+_install_animation_warning_filter()
+
 # ── 国际化 ──
 translator = FluentTranslator(QLocale())
 app.installTranslator(translator)
@@ -139,7 +194,20 @@ app.installTranslator(translator)
 from ui.login_window import LoginWindow
 
 window = LoginWindow()
-window.show()
-logger.info("应用程序启动")
-app.exec_()
-logger.info("应用程序退出")
+
+# 若开启自动登录且账号校验通过：直接显示过渡动画→主窗口，跳过登录界面
+try:
+    if window.auto_login_if_enabled():
+        # 已接管：窗口未显示登录表单，由 _login_success 显示过渡动画并构造主窗口
+        window.show()
+        logger.info("应用程序启动（自动登录）")
+        app.exec_()
+        logger.info("应用程序退出")
+    else:
+        # 未开启自动登录或校验失败：显示普通登录页
+        window.show()
+        logger.info("应用程序启动")
+        app.exec_()
+        logger.info("应用程序退出")
+except Exception as e:
+    logger.error(f"启动异常：{e}", exc_info=True)

@@ -21,7 +21,13 @@ from secrets import token_urlsafe
 from urllib.parse import urlencode
 
 import requests
-from pixivpy3 import AppPixivAPI
+
+try:
+    from pixivpy3 import AppPixivAPI
+    PIXIVPY3_AVAILABLE = True
+except ImportError:
+    PIXIVPY3_AVAILABLE = False
+    AppPixivAPI = None
 
 from core.config import config as CFG
 from core.database import (
@@ -73,8 +79,8 @@ class PixivDownloader:
 
         self._api = None
         self._code_verifier = None
-        # pixivpy3 全局实例
-        self._aapi = AppPixivAPI()
+        # pixivpy3 全局实例（可选依赖，缺失时降级）
+        self._aapi = AppPixivAPI() if PIXIVPY3_AVAILABLE else None
 
     # ---------------------------------------------------------------- 工具方法
     def _log(self, msg):

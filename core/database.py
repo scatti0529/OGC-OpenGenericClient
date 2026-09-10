@@ -122,6 +122,31 @@ def init_jmcomic_tables():
         pass
 
 
+
+def _ensure_indexes():
+    """为高频查询列创建索引（CREATE INDEX IF NOT EXISTS，幂等、纯增量）。"""
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_usage_module ON usage_stats(module)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_username ON usage_stats(username)",
+        "CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_stats(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_songs_playlist ON music_songs(playlist_id)",
+        "CREATE INDEX IF NOT EXISTS idx_songs_identifier ON music_songs(identifier)",
+        "CREATE INDEX IF NOT EXISTS idx_downloads_identifier ON music_downloads(identifier)",
+        "CREATE INDEX IF NOT EXISTS idx_jm_sub_user ON jm_subscriptions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_pixiv_user ON pixiv_tokens(username)",
+    ]
+    conn = get_db_connection()
+    cur = conn.cursor()
+    for stmt in indexes:
+        try:
+            cur.execute(stmt)
+        except Exception:
+            # 某些表可能尚未创建/列缺失，忽略单个索引失败
+            pass
+    conn.commit()
+    conn.close()
+
+
 def init_db():
     """初始化数据库"""
     logger = _get_logger()
@@ -173,6 +198,11 @@ def init_db():
         # 初始化使用量统计表
         try:
             init_usage_table()
+        except Exception:
+            pass
+        # 为高频查询列建索引（加速启动与模块查询）
+        try:
+            _ensure_indexes()
         except Exception:
             pass
         logger.info("数据库初始化成功")
@@ -505,9 +535,69 @@ def delete_user(username: str) -> tuple:
 
 # ═══════════════ 统计信息 ═══════════════
 
+def _count_files(dirs) -> int:
+    """统计目录中的文件数量（跳过隐藏文件、.part/.tmp 残留与缓存目录）"""
+    if isinstance(dirs, str):
+        dirs = [dirs]
+    excluded_dirs = {'thumb_cache', 'thumbs', '.thumbs', 'dir_cache',
+                     '__pycache__', 'cache', '.git'}
+    total = 0
+    for d in dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        try:
+            for root, dirnames, filenames in os.walk(d):
+                dirnames[:] = [x for x in dirnames if x not in excluded_dirs]
+                for f in filenames:
+                    if f.startswith('.'):
+                        continue
+                    low = f.lower()
+                    if low.endswith(('.part', '.tmp')):
+                        continue
+                    total += 1
+        except Exception:
+            continue
+    return total
+
+
+def get_module_file_counts() -> dict:
+    """统计各模块下载目录中的文件数量
+
+    下载根目录 = services.download_manager.get_download_root()，
+    各平台目录形如 douyin-download / bilibili-download / jmcomic-download /
+    easycopy-download；E-Hentai 读配置 ehentai.output_dir；音乐读 music_download_path。
+
+    Returns:
+        {'douyin': N, ..., 'jmcomic': N, 'easycopy': N, 'ehentai': N,
+         'music': N, 'total': N}
+    """
+    counts = {}
+    try:
+        from services.download_manager import get_download_root, PLATFORM_FOLDERS
+        from core.config import config as CFG
+        root = get_download_root()
+        for key, folder in PLATFORM_FOLDERS.items():
+            counts[key] = _count_files(os.path.join(root, folder))
+        # E-Hentai（读配置 ehentai.output_dir）
+        try:
+            eh = (CFG.get('ehentai') or {}).get('output_dir', '')
+            counts['ehentai'] = _count_files(eh) if eh else 0
+        except Exception:
+            counts['ehentai'] = 0
+        # 音乐下载目录
+        try:
+            music_dir = CFG.get('music_download_path', '')
+            counts['music'] = _count_files(music_dir) if music_dir else 0
+        except Exception:
+            counts['music'] = 0
+        counts['total'] = sum(counts.values())
+    except Exception:
+        pass
+    return counts
+
+
 def get_system_stats() -> dict:
     """获取系统统计数据（用于仪表盘）"""
-    import json as _json
     conn = get_db_connection()
     cursor = conn.cursor()
     stats = {}
@@ -518,7 +608,7 @@ def get_system_stats() -> dict:
         # 封禁用户数
         cursor.execute("SELECT COUNT(*) FROM users WHERE is_banned=1")
         stats['banned_count'] = cursor.fetchone()[0]
-        # 音乐相关统计
+        # 音乐相关统计（数据库记录数）
         try:
             cursor.execute("SELECT COUNT(*) FROM music_songs")
             stats['music_song_count'] = cursor.fetchone()[0]
@@ -534,31 +624,19 @@ def get_system_stats() -> dict:
             stats['music_playlist_count'] = cursor.fetchone()[0]
         except Exception:
             stats['music_playlist_count'] = 0
-        # 媒体文件统计
-        try:
-            base = BASE_DIR
-            vids = os.path.join(base, 'videos')
-            videos_count = sum(len(f) for _, _, f in os.walk(vids)) if os.path.exists(vids) else 0
-            stats['video_file_count'] = videos_count
-        except Exception:
-            stats['video_file_count'] = 0
-        try:
-            musics_dir = os.path.join(base, 'music')
-            musics_count = sum(len(f) for _, _, f in os.walk(musics_dir))
-            stats['music_file_count'] = musics_count
-        except Exception:
-            stats['music_file_count'] = 0
-        # JMComic 相关统计
         try:
             cursor.execute("SELECT COUNT(*) FROM jm_subscriptions")
             stats['jmcomic_subscription_count'] = cursor.fetchone()[0]
         except Exception:
             stats['jmcomic_subscription_count'] = 0
-        try:
-            cursor.execute("SELECT COUNT(*) FROM download_quota")
-            stats['jmcomic_download_count'] = cursor.fetchone()[0]
-        except Exception:
-            stats['jmcomic_download_count'] = 0
+        # 各模块下载文件数（扫描下载目录）
+        module_files = get_module_file_counts()
+        stats['module_files'] = module_files
+        stats['total_download_files'] = module_files.get('total', 0)
+        video_keys = ('douyin', 'bilibili', 'twitter', 'pixiv', 'xvideo', 'youtube')
+        stats['video_file_count'] = sum(module_files.get(k, 0) for k in video_keys)
+        stats['jmcomic_download_count'] = module_files.get('jmcomic', 0)
+        stats['music_file_count'] = module_files.get('music', 0)
         # 使用量统计
         try:
             stats['usage'] = get_usage_stats()
@@ -683,7 +761,7 @@ def get_usage_stats(start_date: str = '', end_date: str = '') -> dict:
     where_sql = (' WHERE ' + ' AND '.join(where)) if where else ''
 
     result = {'music': {}, 'video': {}, 'video_sub': {}, 'people': {}, 'home': {},
-              'jmcomic': {}, 'downloads': {}}
+              'jmcomic': {}, 'ehentai': {}, 'easycopy': {}, 'downloads': {}}
     try:
         # 按 module + action 分组统计
         cursor.execute(f"SELECT module, action, COUNT(*) as cnt FROM usage_stats{where_sql} GROUP BY module, action", params)
@@ -701,8 +779,11 @@ def get_usage_stats(start_date: str = '', end_date: str = '') -> dict:
             if row['detail']:
                 result['video_sub'][row['detail']] = row['cnt']
 
-        # 总下载量
-        cursor.execute(f"SELECT COUNT(*) FROM usage_stats WHERE action='download'{' AND ' + where_sql if where_sql else ''}", params)
+        # 总下载量（所有模块 action='download' 的记录数）
+        count_sql = "SELECT COUNT(*) FROM usage_stats WHERE action='download'"
+        if where:
+            count_sql += ' AND ' + ' AND '.join(where)
+        cursor.execute(count_sql, params)
         result['downloads']['total'] = cursor.fetchone()[0]
     except Exception:
         pass

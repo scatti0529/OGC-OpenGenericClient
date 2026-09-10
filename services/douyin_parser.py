@@ -745,6 +745,57 @@ class DouyinVideoParser:
             return None
         return f"https://www.douyin.com/user/{sec_uid}"
 
+    def get_user_profile(self, user_url: str) -> Optional[dict]:
+        """获取用户主页信息（昵称 / 签名 / 头像 / 作品数量 / 粉丝数等）
+
+        使用抖音用户详情接口 web/user/profile/other/，
+        用于订阅作者时保存作者基础信息。
+        """
+        sec_uid = self.get_sec_uid(user_url)
+        if not sec_uid:
+            return None
+
+        headers = self._build_headers(f"https://www.douyin.com/user/{sec_uid}")
+        api_url = "https://www.douyin.com/aweme/v1/web/user/profile/other/"
+        params = self.BASE_PARAMS.copy()
+        params["sec_user_id"] = sec_uid
+
+        data = self._request_json(api_url, params, headers)
+        if not data:
+            return None
+
+        user = data.get("user") or {}
+        avatar_thumb = (user.get("avatar_thumb") or {}).get("url_list") or []
+        return {
+            "sec_uid": user.get("sec_uid") or sec_uid,
+            "nickname": user.get("nickname") or "",
+            "signature": user.get("signature") or "",
+            "avatar_url": avatar_thumb[0] if avatar_thumb else "",
+            "aweme_count": user.get("aweme_count") or 0,
+            "total_favorited": user.get("total_favorited") or 0,
+            "following_count": user.get("following_count") or 0,
+            "follower_count": user.get("follower_count") or 0,
+            "user_home": f"https://www.douyin.com/user/{sec_uid}",
+        }
+
+    @staticmethod
+    def extract_aweme_id_from_url(url: str) -> Optional[str]:
+        """从作品 URL 中提取 aweme_id"""
+        if not url:
+            return None
+        for pattern in _ID_PATTERNS:
+            m = re.search(pattern, url)
+            if m:
+                return m.group(1)
+        return None
+
+    def get_latest_aweme_id(self, user_url: str, max_pages: Optional[int] = None) -> Optional[str]:
+        """获取用户主页最新一条作品的 aweme_id（用于判断是否有更新）"""
+        urls = self.get_user_aweme_urls(user_url, max_pages=max_pages or 1)
+        if not urls:
+            return None
+        return self.extract_aweme_id_from_url(urls[0])
+
     def get_user_aweme_urls_from_video_url(
         self,
         share_url: str,

@@ -74,6 +74,10 @@ class ConfigManager:
             'download_parallel_threshold': 20,   # 大文件并发分块阈值 (MB)
             'download_retry_times': 3,           # 单模式内部重试次数
             'download_mode': 'auto',             # 下载模式: auto/parallel/stream/hls
+            # 自动登录（本机多账号）
+            'auto_login_enabled': False,
+            'auto_login_selected': '',
+            'auto_login_accounts': [],
         }
 
         # 加载配置（兼容旧路径缺失的默认值补全）

@@ -5,6 +5,7 @@ OGC-OpenGenericClient 登录程序 - 启动入口
 """
 import sys
 import os
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,9 @@ from ui.widgets.glass_effect import FrostedPanel, glass_manager
 # ─────────────── 全局 UI 提示工具 ───────────────
 from ui.widgets.ui_utils import install_hover_tip, success_flyout, info_flyout, warning_flyout, error_flyout
 
+# 记住密码存储文件（下次登录自动填充账号与密码）
+_REMEMBER_FILE = 'remembered_login.json'
+
 
 class LoginWindow(FluentWidget, Ui_Form):
     """登录窗口"""
@@ -37,6 +41,9 @@ class LoginWindow(FluentWidget, Ui_Form):
         super().__init__()
         self.setupUi(self)
         setThemeColor('#28afe9')
+
+        # ── 记住密码：若上次勾选过，自动填充账号与密码 ──
+        self._prefill_remembered_login()
 
         logger.info("初始化登录窗口")
         self._current_username = None
@@ -128,6 +135,55 @@ class LoginWindow(FluentWidget, Ui_Form):
                 return
         self.login_avatar_label.setVisible(False)
 
+    # ---------- 记住密码 ----------
+    def _remember_file(self):
+        """记住密码存储文件路径（放在 data 目录）。"""
+        try:
+            return os.path.join(str(CFG.data), _REMEMBER_FILE)
+        except Exception:
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', _REMEMBER_FILE)
+
+    def _prefill_remembered_login(self):
+        """若上次登录勾选了「记住密码」，自动填充账号与密码。"""
+        try:
+            path = self._remember_file()
+            if not os.path.exists(path):
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            username = data.get('username', '')
+            password = data.get('password', '')
+            if username:
+                self.lineEdit_3.setText(username)
+            if password:
+                self.lineEdit_4.setText(password)
+            # 勾选「记住密码」并保持
+            self.checkBox.setChecked(True)
+            self._on_username_changed(username)
+            logger.info("已自动填充记住的账号与密码")
+        except Exception as e:
+            logger.warning(f"读取记住密码失败: {e}")
+
+    def _save_remembered_login(self, username: str, password: str):
+        """登录成功且勾选「记住密码」时，保存账号与密码。"""
+        try:
+            path = self._remember_file()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump({'username': username, 'password': password}, f, ensure_ascii=False, indent=2)
+            logger.info("已保存记住的账号与密码")
+        except Exception as e:
+            logger.warning(f"保存记住密码失败: {e}")
+
+    def _clear_remembered_login(self):
+        """登录成功但未勾选「记住密码」时，清除已保存的账号与密码。"""
+        try:
+            path = self._remember_file()
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info("已清除记住的账号与密码")
+        except Exception as e:
+            logger.warning(f"清除记住密码失败: {e}")
+
     # ---------- 错误提示 ----------
     def createErrorInfoBar(self, title, content):
         """使用 InfoBar 显示错误提示，5秒后自动消失"""
@@ -184,6 +240,14 @@ class LoginWindow(FluentWidget, Ui_Form):
             # info_flyout('登录成功', f"正在进入 OGC 主页，请稍候…", self.pushButton, self)
             logger.info(f"用户登录成功: {username}")
             self._current_username = username
+            # 记住密码：勾选则保存，未勾选则清除
+            try:
+                if self.checkBox.isChecked():
+                    self._save_remembered_login(username, password)
+                else:
+                    self._clear_remembered_login()
+            except Exception as e:
+                logger.warning(f"处理记住密码失败: {e}")
             self._login_success(username)
         else:
             logger.warning(f"用户登录失败: {username} - {message}")
@@ -191,6 +255,30 @@ class LoginWindow(FluentWidget, Ui_Form):
             error_flyout(
                 '登录失败', f"请检查用户名或密码是否正确：{message}",
                 self.pushButton, self)
+
+    def auto_login_if_enabled(self):
+        """若开启自动登录且账号校验通过，则直接走过渡动画→主窗口流程。
+
+        返回 True 表示已接管启动流程（应由调用方停止创建登录界面）；
+        返回 False 表示未开启或校验失败，回退到普通登录页。
+        """
+        try:
+            import core.auto_login as auto_login
+            ok, msg = auto_login.try_auto_login()
+            if not ok:
+                if msg in ('auto_login_disabled', 'no_selected_account'):
+                    logger.info("未开启自动登录或无选中账号，显示登录页")
+                else:
+                    logger.warning(f"自动登录失败：{msg}，回退登录页")
+                return False
+            username = auto_login.get_selected()
+            logger.info(f"自动登录成功：{username}")
+            self._current_username = username
+            self._login_success(username)
+            return True
+        except Exception as e:
+            logger.warning(f"自动登录异常：{e}，回退登录页")
+            return False
 
     def _login_success(self, username):
         """登录成功后展示启动过渡动画，再进入主窗口

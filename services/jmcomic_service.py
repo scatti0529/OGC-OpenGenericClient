@@ -57,7 +57,23 @@ def import_jmcomic() -> Any | None:
         import jmcomic
     except ImportError:
         return None
+    _silence_jmcomic_console_log()
     return jmcomic
+
+
+def _silence_jmcomic_console_log():
+    """隐藏 jmcomic 输出到终端的进度日志（图片/章节/本子下载完成等 INFO 日志）
+
+    jmcomic 库默认在模块导入时向 stdout 注册 handler 并打印 INFO 日志，
+    下载时会大量刷屏。这里仅将该 logger 级别提升到 WARNING：
+    - 隐藏 info 级进度日志（image.after / photo.after / album.after）
+    - 保留 warning / error 级日志，避免出现问题无法排查
+    """
+    try:
+        import logging
+        logging.getLogger('jmcomic').setLevel(logging.WARNING)
+    except Exception:
+        pass
 
 
 def can_import_jmcomic() -> bool:
@@ -208,6 +224,80 @@ def classify_exception(exc: BaseException) -> tuple[str, str]:
 
 
 # ═══════════════════════════════════════════════════════════
+#  统一下载目录规则（下载目录\漫画名称\{章节名}\文件）
+#  ═══════════════════════════════════════════════════════════
+#  目标目录形态（与拷贝漫画一致）：
+#   多章：  {download_root}/jmcomic-download/{漫画名}/{章节名}/{图片}
+#   单章：  {download_root}/jmcomic-download/{漫画名}/{图片}     （章节=1 省略章节名）
+_OGC_OPTION_CLASS = None
+
+
+def _get_ogc_option_class():
+    """惰性构建使用自定义 DirRule 的 JmOption 子类（jmcomic 惰性导入）。"""
+    global _OGC_OPTION_CLASS
+    if _OGC_OPTION_CLASS is not None:
+        return _OGC_OPTION_CLASS
+
+    jmcomic = import_jmcomic()
+    if jmcomic is None:
+        return None
+
+    class OgcJmDirRule(jmcomic.DirRule):
+        """自定义目录规则：单章本子省略章节层。"""
+
+        def decide_image_save_dir(self, album, photo) -> str:
+            # 单章本子：省略章节层（下载目录/漫画名/文件）
+            try:
+                single = photo is not None and (
+                    photo.is_single_album
+                    or (photo.from_album is None)
+                    or len(photo.from_album) <= 1
+                )
+            except Exception:
+                single = False
+            if single:
+                if album is not None:
+                    # only_album_rules=True → 只保留 Bd + A* 规则（base_dir/漫画名）
+                    return self.apply_rule_to_path(album, None, True)
+                # 独立章节下载（无 album）：base_dir/漫画名（单章=漫画名）
+                try:
+                    title = str(photo.title or '未命名').strip()
+                    return jmcomic.fix_windir_name(
+                        f'{self.base_dir}/{title}')
+                except Exception:
+                    return self.base_dir
+            return super().decide_image_save_dir(album, photo)
+
+    class OgcJmOption(jmcomic.JmOption):
+        """使用自定义 DirRule 的 JmOption。"""
+
+        def __init__(self, dir_rule, download, client, plugins, filepath=None,
+                     call_after_init_plugin=True):
+            super().__init__(dir_rule, download, client, plugins, filepath,
+                             call_after_init_plugin)
+            # 替换为支持单章省略章节层的自定义 DirRule
+            try:
+                self.dir_rule = OgcJmDirRule(**dir_rule)
+            except Exception:
+                pass
+
+    _OGC_OPTION_CLASS = OgcJmOption
+    return _OGC_OPTION_CLASS
+
+
+def _register_ogc_option():
+    """注册自定义 JmOption（幂等）。"""
+    try:
+        jmcomic = import_jmcomic()
+        if jmcomic is not None and jmcomic.JmModuleConfig.CLASS_OPTION is None:
+            cls = _get_ogc_option_class()
+            if cls is not None:
+                jmcomic.JmModuleConfig.CLASS_OPTION = cls
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════
 #  默认配置
 # ═══════════════════════════════════════════════════════════
 
@@ -341,7 +431,12 @@ class JMConfigManager:
         return bool(self.jm_username and self.jm_password)
 
     def create_jm_option(self):
-        """创建 JmOption 配置对象"""
+        """创建 JmOption 配置对象
+
+        下载目录规则（与拷贝漫画一致）：
+            多章：{download_root}/jmcomic-download/{漫画名}/{章节名}/{图片}
+            单章：{download_root}/jmcomic-download/{漫画名}/{图片}（省略章节名）
+        """
         jmcomic = import_jmcomic()
         if jmcomic is None:
             return None
@@ -349,8 +444,10 @@ class JMConfigManager:
         if self._option is not None:
             return self._option
 
+        _register_ogc_option()
+
         option_dict = {
-            "dir_rule": {"base_dir": str(self.download_dir), "rule": "Bd/Aid/Pindex"},
+            "dir_rule": {"base_dir": str(self.download_dir), "rule": "Bd/Atitle/Ptitle"},
             "download": {
                 "image": {"suffix": self.image_suffix},
                 "threading": {
@@ -532,6 +629,60 @@ class JMBrowser(JMClientMixin):
         except Exception:
             return None
 
+    # ---------------- 在线阅读 ----------------
+    async def get_chapter_images(self, photo_id: str) -> list:
+        """获取章节的全部图片直链（在线阅读，不落盘）。"""
+        if not self.is_available():
+            return []
+        option = self._get_option()
+        if option is None:
+            return []
+        return await self._run_sync(self._get_chapter_images_sync, photo_id, option)
+
+    def _get_chapter_images_sync(self, photo_id, option) -> list:
+        try:
+            jmcomic = import_jmcomic()
+            if jmcomic is None:
+                return []
+            client = option.new_jm_client()
+            parsed_id = jmcomic.JmcomicText.parse_to_jm_id(photo_id)
+            photo = client.get_photo_detail(parsed_id)
+            urls = []
+            for image in photo:
+                try:
+                    url = image.download_url  # 带 ?v= 参数的真实直链
+                    if url:
+                        urls.append(url)
+                except Exception:
+                    continue
+            return urls
+        except Exception:
+            return []
+
+    async def get_album_episodes(self, album_id: str) -> list:
+        """获取本子全部章节列表：[(photo_id, photo_title), ...]。"""
+        if not self.is_available():
+            return []
+        option = self._get_option()
+        if option is None:
+            return []
+        return await self._run_sync(self._get_album_episodes_sync, album_id, option)
+
+    def _get_album_episodes_sync(self, album_id, option) -> list:
+        try:
+            jmcomic = import_jmcomic()
+            if jmcomic is None:
+                return []
+            client = option.new_jm_client()
+            parsed_id = jmcomic.JmcomicText.parse_to_jm_id(album_id)
+            album = client.get_album_detail(parsed_id)
+            episodes = []
+            for photo_id, _, photo_title in album.episode_list:
+                episodes.append((str(photo_id), str(photo_title)))
+            return episodes
+        except Exception:
+            return []
+
     # ---------------- 排行榜 ----------------
     async def get_week_ranking(self, page=1, category="all"):
         return await self._get_ranking("week", page, category)
@@ -686,6 +837,27 @@ class DownloadResult:
 _PROGRESS_DOWNLOADER_CLASS = None
 
 
+def _write_jm_done_marker(directory) -> None:
+    """在章节目录写 .jmcomic_done 完成标记（溯源：离线阅读识别已下载完成）。"""
+    try:
+        import time as _time
+        (Path(directory) / '.jmcomic_done').write_text(
+            _time.strftime('%Y-%m-%d %H:%M:%S'), encoding='utf-8')
+    except Exception:
+        pass
+
+
+def _invalidate_jm_index() -> None:
+    """JMComic 下载完成后使离线索引失效（下次扫描重建）。"""
+    try:
+        from services.comic_library import invalidate_index, default_index_path
+        from services.download_manager import get_download_root
+        root = os.path.join(get_download_root(), 'jmcomic-download')
+        invalidate_index(default_index_path(root, 'jmcomic'))
+    except Exception:
+        pass
+
+
 def _get_progress_downloader_class(jmcomic):
     """惰性构建带进度计数的 JmDownloader 子类"""
     global _PROGRESS_DOWNLOADER_CLASS
@@ -788,6 +960,18 @@ class JMDownloadManager(JMClientMixin):
             all_success = _resolve_all_success(downloader, skip_photos)
             image_count = getattr(downloader, "downloaded_images", 0) or album.page_count
 
+            # 全部成功 -> 每章节目录写完成标记（溯源：离线阅读识别已下载完成）
+            if all_success:
+                try:
+                    for photo in album:
+                        photo_dir = Path(option.dir_rule.decide_image_save_dir(album, photo))
+                        photo_dir.mkdir(parents=True, exist_ok=True)
+                        _write_jm_done_marker(photo_dir)
+                except Exception:
+                    pass
+                # 下载完成 -> 离线索引失效（下次扫描重建）
+                _invalidate_jm_index()
+
             return DownloadResult(
                 success=True, album_id=str(album.id), title=album.title,
                 author=album.author, photo_count=len(album), image_count=image_count,
@@ -826,10 +1010,20 @@ class JMDownloadManager(JMClientMixin):
                 photo = downloader.download_photo(parsed_id)
 
             save_path = Path(option.decide_image_save_dir(photo))
-            image_count = len(photo.images) if hasattr(photo, "images") else 0
+            image_count = len(photo) if hasattr(photo, "__len__") else 0
             failed_images = len(getattr(downloader, "download_failed_image", []))
             failed_images += len(getattr(downloader, "download_failed_photo", []))
             all_success = bool(getattr(downloader, "all_success", True))
+
+            # 全部成功 -> 章节目录写完成标记（溯源）
+            if all_success:
+                try:
+                    save_path.mkdir(parents=True, exist_ok=True)
+                    _write_jm_done_marker(save_path)
+                except Exception:
+                    pass
+                # 下载完成 -> 离线索引失效（下次扫描重建）
+                _invalidate_jm_index()
 
             return DownloadResult(
                 success=True, album_id=str(photo.album_id) if hasattr(photo, "album_id") else photo_id,
@@ -1729,6 +1923,22 @@ class JMComicService(QObject):
         self._record_usage('pack', pack_format)
         packer = JMPacker(pack_format=pack_format, password=password)
         return packer.pack(source_dir, output_name)
+
+    # ---------- 在线阅读 ----------
+    def read_chapter(self, photo_id, on_done, on_error):
+        """在线获取章节图片直链（不落盘）。"""
+        return self.submit(self.browser.get_chapter_images, photo_id,
+                           on_done=on_done, on_error=on_error)
+
+    def get_episodes(self, album_id, on_done, on_error):
+        """在线获取本子章节列表 [(photo_id, photo_title), ...]。"""
+        return self.submit(self.browser.get_album_episodes, album_id,
+                           on_done=on_done, on_error=on_error)
+
+    # ---------- 离线阅读 ----------
+    def offline_root(self) -> Path:
+        """JMComic 离线阅读根目录（与下载目录一致）。"""
+        return self.config.download_dir
 
     def generate_filename(self, album_id, password, chapter_idx, show_password):
         timestamp = int(time.time())

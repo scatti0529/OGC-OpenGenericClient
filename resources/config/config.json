@@ -8,10 +8,14 @@
         "CheckUpdateAtStartUp": false
     },
     "Folders": {
-        "Download": "E:/项目程序/PY项目/测试下载",
-        "LocalMusic": [
-            "E:/项目程序/PY项目/测试程序/OGC-OpenGenericClient/data/musics"
-        ]
+        "Download": "",
+        "LocalMusic": []
+    },
+    "Download": {
+        "MaxThreads": 7,
+        "Mode": "auto",
+        "ParallelThreshold": 20,
+        "RetryTimes": 3
     },
     "MainWindow": {
         "DpiScale": "Auto",

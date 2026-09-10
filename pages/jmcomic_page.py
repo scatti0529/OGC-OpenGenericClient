@@ -1589,11 +1589,16 @@ class JmComicPage(QWidget):
         self.subscribe_tab = SubscribeTab(self.service, self)
         self.settings_tab = SettingsTab(self.service, self)
 
+        # 阅读页（在线阅读 + 离线阅读）
+        from pages.album.jmcomic_reader import JMComicReaderPage
+        self.reader_tab = JMComicReaderPage(self.service, self)
+
         # 添加选项卡
         self.tabs.addTab(self.search_tab, "搜索与浏览", FIF.SEARCH)
         self.tabs.addTab(self.download_tab, "下载中心", FIF.DOWNLOAD)
+        self.tabs.addTab(self.reader_tab, "阅读", FIF.BOOK_SHELF)
         self.tabs.addTab(self.account_tab, "账号与收藏", FIF.PEOPLE)
-        self.tabs.addTab(self.subscribe_tab, "订阅管理", FIF.BOOK_SHELF)
+        self.tabs.addTab(self.subscribe_tab, "订阅管理", FIF.HEART)
         self.tabs.addTab(self.settings_tab, "设置", FIF.SETTING)
 
     # ---------- 对外接口 ----------

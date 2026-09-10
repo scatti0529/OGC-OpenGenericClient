@@ -6,7 +6,7 @@ import re
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QGridLayout, QFrame, QRadioButton,
+    QGridLayout, QFrame, QRadioButton, QStackedWidget,
 )
 from qfluentwidgets import (
     CardWidget, FluentIcon as FIF, LineEdit, TextEdit, PrimaryPushButton,
@@ -23,6 +23,7 @@ from pages.video.pixiv_dialogs import (
     show_error, show_info, show_success,
 )
 from ui.widgets.ui_utils import install_hover_tip
+from pages.video.video_mini_window import VideoMiniDownloadWindow
 
 
 class PixivPage(QScrollArea):
@@ -56,6 +57,7 @@ class PixivPage(QScrollArea):
         self._MAX_CONCURRENT = 2  # 同时最多并发解析条数，其余入队依次解析
         self._downloader = PixivDownloader(
             log_callback=lambda msg: self._on_log(msg))
+        self._mini_window = None
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -71,6 +73,71 @@ class PixivPage(QScrollArea):
         self._build_input_card()
         self._build_results_area()
 
+        # ── 离线/在线媒体查看（图片与视频分开，左侧文件列表）──
+        self._wrap_with_offline_viewer('pixiv', 'Pixiv')
+
+    def _wrap_with_offline_viewer(self, platform: str, display_name: str):
+        """把现有「解析下载」视图包进选项卡，并追加「离线查看」页。"""
+        from pages.video.media_offline import MediaOfflineViewer
+
+        parse_widget = QWidget(self.view)
+        parse_layout = QVBoxLayout(parse_widget)
+        parse_layout.setContentsMargins(0, 0, 0, 0)
+        parse_layout.setSpacing(12)
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+            try:
+                stretch = item.stretch()
+            except Exception:
+                stretch = 0
+            w = item.widget()
+            if w is not None:
+                parse_layout.addWidget(w, stretch)
+            elif item.layout() is not None:
+                parse_layout.addLayout(item.layout(), stretch)
+            del item
+
+        self._view_tabs = QHBoxLayout()
+        self._view_tabs.setSpacing(8)
+        self.parse_view_btn = PushButton('解析下载', self.view)
+        self.offline_view_btn = PushButton('离线查看', self.view)
+        self.parse_view_btn.clicked.connect(lambda: self._set_view(0))
+        self.offline_view_btn.clicked.connect(lambda: self._set_view(1))
+        self._view_tabs.addWidget(self.parse_view_btn)
+        self._view_tabs.addWidget(self.offline_view_btn)
+        self._view_tabs.addStretch(1)
+
+        self._root_stack = QStackedWidget(self.view)
+        self._offline_viewer = MediaOfflineViewer(platform, display_name, self)
+        self._offline_viewer.back_requested.connect(lambda: self._set_view(0))
+        self._root_stack.addWidget(parse_widget)
+        self._root_stack.addWidget(self._offline_viewer)
+
+        self.layout.addLayout(self._view_tabs)
+        self.layout.addWidget(self._root_stack, 1)
+        self._set_view(0)
+
+    def _set_view(self, index: int):
+        """切换 解析下载 / 离线查看 视图。离开离线查看时暂停视频。"""
+        if index == 0 and hasattr(self, '_offline_viewer'):
+            try:
+                self._offline_viewer.pause()
+            except Exception:
+                pass
+        self._root_stack.setCurrentIndex(index)
+        self.parse_view_btn.setProperty('checked', index == 0)
+        self.offline_view_btn.setProperty('checked', index == 1)
+        for btn in (self.parse_view_btn, self.offline_view_btn):
+            checked = btn.property('checked')
+            btn.setStyleSheet(
+                "QPushButton { background: #28afe9; color: white; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+                if checked else
+                "QPushButton { background: transparent; color: #8a8a8a; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+            )
+            btn.update()
+
     def _build_input_card(self):
         """第一排：搜索框 + 粘贴 + 解析 + 批量下载"""
         inputCard = CardWidget(self.view)
@@ -83,6 +150,13 @@ class PixivPage(QScrollArea):
         titleLabel.setStyleSheet("font-size: 16px; font-weight: bold;")
         titleRow.addWidget(titleLabel)
         titleRow.addStretch()
+        # 迷你下载窗口开关按钮（输入链接直接解析下载，不生成卡片）
+        self.mini_window_btn = PushButton(FIF.DOWNLOAD, "迷你窗口", inputCard)
+        self.mini_window_btn.setFixedHeight(30)
+        self.mini_window_btn.setToolTip("打开迷你下载窗口：输入链接直接解析并下载，不在页面生成卡片")
+        self.mini_window_btn.clicked.connect(self._toggle_mini_window)
+        titleRow.addWidget(self.mini_window_btn)
+
         inputLayout.addLayout(titleRow)
 
         urlRow = QHBoxLayout()
@@ -271,6 +345,13 @@ class PixivPage(QScrollArea):
             except (RuntimeError, Exception):
                 pass
         self._active_parsers = []
+        # 关闭离线/在线媒体查看器的后台线程与播放器
+        try:
+            viewer = getattr(self, '_offline_viewer', None)
+            if viewer is not None and hasattr(viewer, 'shutdown'):
+                viewer.shutdown()
+        except Exception:
+            pass
         super().closeEvent(event)
 
     @staticmethod
@@ -285,6 +366,27 @@ class PixivPage(QScrollArea):
                 seen.add(p)
                 result.append(p)
         return result
+
+    # ---------------- 迷你下载窗口 ----------------
+    def _toggle_mini_window(self):
+        """打开/隐藏迷你下载窗口（输入链接直接解析下载，不生成卡片）。"""
+        try:
+            if self._mini_window is None:
+                self._mini_window = VideoMiniDownloadWindow(
+                    'pixiv', 'Pixiv', self.window())
+                self._mini_window.set_owner(self.window())
+            if self._mini_window.isVisible():
+                self._mini_window.hide()
+            else:
+                text = self.urlEdit.toPlainText().strip()
+                if text:
+                    self._mini_window.url_edit.setPlainText(text)
+                self._mini_window.set_sessdata('')
+                self._mini_window.show()
+                self._mini_window.raise_()
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     def _on_parse(self):
         if self._parsing or self._queue_parsing:

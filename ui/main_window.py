@@ -3,7 +3,7 @@ import os
 import sys
 import logging
 from datetime import datetime
-from PyQt5.QtCore import Qt, QUrl, QLocale, QTranslator, QSize, QEventLoop, QTimer
+from PyQt5.QtCore import Qt, QUrl, QLocale, QTranslator, QSize, QEventLoop, QTimer, QEvent
 from PyQt5.QtGui import QIcon, QDesktopServices
 from PyQt5.QtWidgets import QApplication, QFrame, QHBoxLayout
 from qframelesswindow import FramelessWindow, StandardTitleBar
@@ -33,8 +33,14 @@ from pages.jmcomic_page import JmComicPage
 from pages.video.video_multiplatform_page import MultiPlatformVideoInterface, PlatformPage
 from pages.video.pixiv_page_ui import PixivPage
 from pages.video.douyin_page import DouyinPage
+from pages.video.douyin_subscription_page import DouyinSubscriptionPage
 from pages.music.music_page import MusicInterface
+from pages.folder_library_page import FolderLibraryPage
 from pages.dashboard_page import DashboardInterface
+from pages.album.album_interface import AlbumInterface
+from pages.album.ehentai_page import EhentaiPage
+from pages.album.easycopy_page import EasyCopyPage
+from pages.email.email_page import EmailPage
 
 # ─────────────── 权限管理 ───────────────
 from core.database import is_admin, get_user_permissions
@@ -49,6 +55,8 @@ from core.resource_paths import (
     NAV_PIXIV as Pixiv_icon,
     NAV_YOUTUBE as Youtube_icon,
     NAV_BILIBILI as bili_icon,
+    NAV_EHENTAI as ehentai_icon,
+    NAV_JMCOMIC as jmcomic_icon,
     NAV_PEOPLE_LEVEL as people_icon,
     MAIN_GLASS_BG,
 )
@@ -86,6 +94,8 @@ class Window(SplitFluentWindow):
         # 创建六个平台子模块页面
         self.videoPage_douyin    = DouyinPage(self)
         self.videoPage_douyin.setObjectName("抖音")
+        self.videoPage_douyin_subscription = DouyinSubscriptionPage(self)
+        self.videoPage_douyin_subscription.setObjectName("抖音订阅")
         self.videoPage_bilibili  = PlatformPage('bilibili', '哔哩哔哩', self)
         self.videoPage_bilibili.setObjectName("哔哩哔哩")
         self.videoPage_twitter   = PlatformPage('twitter', '推特(X)', self)
@@ -106,13 +116,29 @@ class Window(SplitFluentWindow):
             'youtube': self.videoPage_youtube,
         })
 
-        self.PeopleInterface     = JmComicPage(self)
-        self.PeopleInterface.setObjectName("人物")  # 添加这一行
-        self.folderInterface     = Widget('Folder Interface', self)
-        self.albumInterface      = Widget('Album Interface', self)
-        self.albumInterface1     = Widget('Album 1', self)
-        self.albumInterface2     = Widget('Album 2', self)
-        self.albumInterface1_1   = Widget('Album 1-1', self)
+        self.folderInterface     = FolderLibraryPage(self)
+        self.folderInterface.setObjectName("Folder Library")
+        # ★★★ 画册模块（主页 + 子模块） ★★★
+        self.albumInterface      = AlbumInterface(self)
+        self.albumInterface.setObjectName("画册")  # 添加这一行
+        self.ehentaiPage         = EhentaiPage(self)
+        self.ehentaiPage.setObjectName("E-Hentai")
+        self.ehentaiPage.apply_last_url()
+        # ★★★ 拷贝漫画子模块（EasyCopy：首页/发现/排行/我的/设置 + 下载） ★★★
+        self.easycopyPage        = EasyCopyPage(self)
+        self.easycopyPage.setObjectName("拷贝漫画")
+        self.JmComicPage     = JmComicPage(self)
+        self.JmComicPage.setObjectName("jmcomic")  # 添加这一行
+        # 将子模块页面引用传递给画册主页，使入口卡片可以跳转
+        self.albumInterface.setSubInterfaces({
+            'easycopy': self.easycopyPage,
+            'ehentai': self.ehentaiPage,
+            'jmcomic': self.JmComicPage,
+        })
+
+        # ★★★ 邮箱模块（原生 IMAP/SMTP 客户端，Roundcube 式三栏） ★★★
+        self.emailPage             = EmailPage(self)
+        self.emailPage.setObjectName("邮箱")
 
         # ★★★  真正的设置界面  ★★★
         self.about_me            = AboutMeInterface()
@@ -176,6 +202,15 @@ class Window(SplitFluentWindow):
         # 给视频页面注册主题刷新回调
         on_theme_changed(self.videoInterface._apply_theme_style)
 
+        # ── 退出前回收所有后台线程（aboutToQuit 在窗口关闭后、进程销毁前触发）──
+        try:
+            from PyQt5.QtWidgets import QApplication
+            _app = QApplication.instance()
+            if _app is not None:
+                _app.aboutToQuit.connect(self._reap_threads)
+        except Exception:
+            pass
+
     # ---------------- 全局主题刷新 ----------------
     def _on_global_theme_changed(self):
         """全局主题切换后刷新主窗口组件"""
@@ -198,19 +233,20 @@ class Window(SplitFluentWindow):
     def initNavigation(self):
         self.addSubInterface(self.homeInterface,   FIF.HOME,  '首页')
         self.addSubInterface(self.musicInterface,  FIF.MUSIC, '音乐')
+        
+        self.navigationInterface.addSeparator()  # 分界线
+        
         self.addSubInterface(self.videoInterface,  FIF.VIDEO, '视频')
         # 六个平台子模块（嵌套在视频父级下）
         self.addSubInterface(self.videoPage_douyin,    douyin_icon, '抖音', parent=self.videoInterface)
+        self.addSubInterface(self.videoPage_douyin_subscription, FIF.HEART, '抖音订阅', parent=self.videoInterface)
         self.addSubInterface(self.videoPage_bilibili,  bili_icon,   '哔哩哔哩', parent=self.videoInterface)
         self.addSubInterface(self.videoPage_twitter,   X_icon,      '推特', parent=self.videoInterface)
         self.addSubInterface(self.videoPage_pixiv,     Pixiv_icon,   'Pixiv', parent=self.videoInterface)
         self.addSubInterface(self.videoPage_xvideo,    Xvideo_icon,   'Xvideo', parent=self.videoInterface)
         self.addSubInterface(self.videoPage_youtube,   Youtube_icon,    'YouTube', parent=self.videoInterface)
         # 视频父项：点击只展开/收起子模块，不切换页面
-        # clicked 信号连接了 [0] panel._onWidgetClicked（展开/收缩 + flyout）
-        # 和 [1] addSubInterface 传入的 switchTo（页面切换）。
-        # 方案：断开全部后，仅重新连接 _onWidgetClicked，保留 flyout 子菜单
-        # 与展开/收缩逻辑，且不连接 switchTo → 点击不切换页面
+        # 收缩（导航栏折叠）状态下点击父项图标：不弹子模块 flyout（不向下展开）
         video_nav = self._nav_items.get('视频')
         if video_nav is not None and hasattr(video_nav, 'itemWidget'):
             video_nav.itemWidget.isSelectable = False
@@ -221,14 +257,46 @@ class Window(SplitFluentWindow):
             # 重新连接框架内部的 _onWidgetClicked（支持收缩模式 flyout 子菜单）
             panel = self.navigationInterface.panel
             if hasattr(panel, '_onWidgetClicked'):
-                video_nav.clicked.connect(panel._onWidgetClicked)
-        self.addSubInterface(self.PeopleInterface,  FIF.PEOPLE, 'JMComic')
-        self.navigationInterface.addSeparator()
-        self.addSubInterface(self.albumInterface,  FIF.ALBUM, 'Albums', NavigationItemPosition.SCROLL)
-        self.addSubInterface(self.albumInterface1, FIF.ALBUM, 'Album 1', parent=self.albumInterface)
-        self.addSubInterface(self.albumInterface1_1, FIF.ALBUM, 'Album 1.1', parent=self.albumInterface1)
-        self.addSubInterface(self.albumInterface2, FIF.ALBUM, 'Album 2', parent=self.albumInterface)
-        self.addSubInterface(self.folderInterface, FIF.FOLDER,'Folder library', NavigationItemPosition.SCROLL)
+                video_nav.clicked.connect(panel._onWidgetClicked)       
+                
+        # ★★★ 画册模块（父级 + 子模块，结构同视频模块） ★★★
+        # self.addSubInterface(self.albumInterface,  FIF.ALBUM, '画册', NavigationItemPosition.SCROLL)
+        self.addSubInterface(self.albumInterface,  FIF.ALBUM, '画册')
+        self.addSubInterface(self.easycopyPage,    FIF.LIBRARY, '拷贝漫画', parent=self.albumInterface)
+        self.addSubInterface(self.ehentaiPage,     ehentai_icon, 'E-Hentai', parent=self.albumInterface)
+        self.addSubInterface(self.JmComicPage, jmcomic_icon, 'JMComic', parent=self.albumInterface)
+        # 画册父项：点击只展开/收起子模块，不切换页面（与视频父项一致）
+        '''
+        album_nav = self._nav_items.get('画册')
+        if album_nav is not None and hasattr(album_nav, 'itemWidget'):
+            album_nav.itemWidget.isSelectable = False
+            try:
+                album_nav.clicked.disconnect()
+            except Exception:
+                pass
+            # 重新连接框架内部的 _onWidgetClicked（支持收缩模式 flyout 子菜单）
+            panel = self.navigationInterface.panel
+            if hasattr(panel, '_onWidgetClicked'):
+                album_nav.clicked.connect(panel._onWidgetClicked)
+        ''' 
+        album_nav = self._nav_items.get('画册')
+        if album_nav is not None and hasattr(album_nav, 'itemWidget'):
+            album_nav.itemWidget.isSelectable = False
+            try:
+                album_nav.clicked.disconnect()
+            except Exception:
+                pass
+            panel = self.navigationInterface.panel
+            if hasattr(panel, '_onWidgetClicked'):
+                album_nav.clicked.connect(panel._onWidgetClicked)       
+        
+        # ★★★ 邮箱（顶层导航项，Roundcube 式三栏） ★★★
+        self.addSubInterface(self.emailPage, FIF.MAIL, '邮箱')
+
+        self.addSubInterface(self.folderInterface, FIF.FOLDER, '本地文件', NavigationItemPosition.SCROLL)
+        
+        
+        self.navigationInterface.addSeparator()  # 分界线
 
         # 底部头像
         '''
@@ -257,6 +325,33 @@ class Window(SplitFluentWindow):
         self._applyNavigationWidth()
         return item
 
+    # ---------------- 父级导航项点击 ----------------
+    def _on_tree_parent_clicked(self):
+        """画册/视频父项点击处理。
+
+        - 展开态：子模块展开/收起由框架内部 _onClicked 完成，这里不做任何事
+          （既不会切换页面，也不会弹 flyout）；
+        - 收缩态（导航栏折叠为纯图标）：不弹出子模块 flyout（不向下展开），
+          而是直接切到父页面本身（画册主页 / 视频主页）。
+        """
+        try:
+            nav = self.sender()
+            if nav is None:
+                return
+            panel = self.navigationInterface.panel
+            if not panel.isCollapsed():
+                return  # 展开态：内部 _onClicked 已处理展开/收起
+            # 收缩态：切到父页面，避免 flyout 向下展开子模块
+            route = nav.property('routeKey')
+            if route == '视频' and hasattr(self, 'videoInterface'):
+                # self.switchTo(self.videoInterface)
+                pass
+            elif route == '画册' and hasattr(self, 'albumInterface'):
+                # self.switchTo(self.albumInterface)
+                pass
+        except Exception as e:
+            logger.error(f"父级导航项点击处理失败: {e}")
+
     # ---------------- 权限控制 ----------------
     def setCurrentUser(self, username: str):
         """登录后设置当前用户，传递到各界面，并根据权限控制导航栏显示"""
@@ -279,7 +374,7 @@ class Window(SplitFluentWindow):
                 '首页': 'home',
                 '音乐': 'music',
                 '视频': 'video',
-                '人物': 'people',
+                '邮箱': 'email',
                 'about_me': 'about_me',
                 'Settings': 'settings',
             }
@@ -454,12 +549,79 @@ class Window(SplitFluentWindow):
             panel.resize(target, panel.height())
             self.navigationInterface.setFixedWidth(target)
 
+    def changeEvent(self, event):
+        """修复最大化窗口失焦/重新聚焦后的几何与标题栏问题。
+
+        无边框窗口最大化后切到其他程序再切回来，原生层可能沿用旧的
+        最大化几何，导致窗口超出当前屏幕工作区（顶部标题栏被顶出屏幕、
+        窗口看起来"扩大"）；且重新聚焦后标题栏未重新置顶而"消失"。
+        这里在窗口状态 / 激活变化时：重新置顶标题栏、同步磨砂背景层，
+        并在最大化几何确实超出工作区时重新约束到可用屏幕区域。
+        """
+        super().changeEvent(event)
+        if event.type() in (QEvent.WindowStateChange, QEvent.ActivationChange):
+            try:
+                # 重新置顶标题栏（避免被页面/磨砂背景面板遮挡）
+                tb = getattr(self, 'titleBar', None)
+                if tb is not None:
+                    tb.raise_()
+                # 同步全局磨砂背景层尺寸
+                if hasattr(self, '_glass_bg_panel'):
+                    self._glass_bg_panel.setGeometry(0, 0, self.width(), self.height())
+                # 仅当最大化几何确实超出当前屏幕工作区时才修正，避免干扰正常最大化
+                if self.isMaximized():
+                    screen = QApplication.screenAt(self.frameGeometry().center()) \
+                        or QApplication.primaryScreen()
+                    if screen is not None:
+                        avail = screen.availableGeometry()
+                        frame = self.frameGeometry()
+                        if not avail.contains(frame) or frame.width() > avail.width() \
+                                or frame.height() > avail.height():
+                            self.setGeometry(avail)
+            except Exception:
+                pass
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._applyNavigationWidth()
         # 同步全局磨砂背景层尺寸（窗口级，覆盖整个窗口）
         if hasattr(self, '_glass_bg_panel'):
             self._glass_bg_panel.setGeometry(0, 0, self.width(), self.height())
+
+    # ---------------- 线程健壮性 ----------------
+    def _reap_threads(self):
+        """回收所有仍在运行的后台 QThread（窗口关闭 / 应用退出前各调用一次）。"""
+        try:
+            from PyQt5.QtCore import QThread
+            for _round in range(2):  # 两轮：第一轮打断，第二轮再等待一次
+                seen = set()
+                for t in self.findChildren(QThread):
+                    try:
+                        if t in seen:
+                            continue
+                        seen.add(t)
+                        if not t.isRunning():
+                            continue
+                        try:
+                            t.requestInterruption()
+                        except Exception:
+                            pass
+                        try:
+                            t.wait(1200)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        """窗口关闭时回收所有仍在运行的后台线程，避免退出时 QThread destroyed 闪退。"""
+        try:
+            self._reap_threads()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # ---------------- 用户名修改 ----------------
     def _on_username_changed(self, new_username: str):

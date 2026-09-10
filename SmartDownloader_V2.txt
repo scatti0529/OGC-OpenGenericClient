@@ -551,7 +551,7 @@ if __name__ == "__main__":
     # downloader = SmartDownloader(
         # url="https://v9-default.365yg.com/27bb8ff402f2ef8f6406329cb88b4893/67b69612/video/tos/cn/tos-cn-ve-15/ocGe9IjQ2ErhHL1BcGCe9fX211GjC7ABDOImAB/?a=2011&ch=0&cr=0&dr=0&er=0&lr=unwatermarked&net=5&cd=0%7C0%7C0%7C0&cv=1&br=3641&bt=3641&cs=0&ds=4&ft=k7Fz7VVywSyRKJ8kmo~pK7pswApyY9kZvrKLO~ycdo0g3cI&mime_type=video_mp4&qs=0&rc=NGk1NWU5NGYzN2VnO2U2NkBpanZ5OnI5cmptdzMzNGkzM0AuYi4tXzM2NWMxYi5jYS8xYSNlXm9sMmRzYS5gLS1kLTBzcw%3D%3D&btag=80000e00010000&dy_q=1740015603&feature_id=46a7bb47b4fd1280f3d3825bf2b29388&l=20250220094003D8BE4E4022A715BEFD9D",
         # filename="如此原神，怎能不爱.mp4",
-        # download_path="E:/软件删除/video",
+        # download_path="D:/downloads/video",
         # num_threads=8
     # )
     

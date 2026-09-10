@@ -38,12 +38,9 @@ IMPORT_MAP = [
     ('from ilbs.music_page import', 'from pages.music.music_page import'),
     ('from ilbs.dashboard import', 'from pages.dashboard_page import'),
     ('from ilbs.common import', 'from ui.widgets.common import'),
-    ('from ilbs.gallery_interface import', 'from pages.gallery_interface import'),
-    ('from ilbs.gallery_interface_2 import', 'from pages.gallery_interface_2 import'),
     ('from ilbs.music_player_engine import', 'from pages.music.music_player_engine import'),
     ('from ilbs.music_player_ui import', 'from pages.music.music_player_ui import'),
     ('from ilbs.music_playlist_manager_page import', 'from pages.music.music_playlist_manager_page import'),
-    ('from ilbs.video_page import', 'from pages.video.video_page import'),
     # OGClogin / OGChome
     ('from OGClogin import', 'from ui.login_window import'),
     ('from OGChome import', 'from ui.main_window import'),

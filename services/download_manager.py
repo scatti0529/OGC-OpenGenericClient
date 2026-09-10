@@ -87,6 +87,7 @@ PLATFORM_FOLDERS = {
     'xvideo': 'xvideo-download',
     'youtube': 'youtube-download',
     'jmcomic': 'jmcomic-download',
+    'easycopy': 'easycopy-download',
 }
 
 SUBDIRS = ('images', 'videos', 'audios', 'sourcefiles')
@@ -1141,5 +1142,15 @@ def download_media(url: str, filename: str, platform: str, file_type: str = 'vid
     success = downloader.download()
     path = downloader.get_downloaded_path()
     if success:
+        _record_download_usage(platform)
         return True, f"{filename} 下载完成", path
     return False, f"{filename} 下载失败", path
+
+
+def _record_download_usage(platform: str):
+    """记录一次视频下载使用行为（供仪表盘统计，函数内导入避免循环依赖）"""
+    try:
+        from core.database import record_usage
+        record_usage('video', 'download', platform)
+    except Exception:
+        pass

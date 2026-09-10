@@ -51,6 +51,8 @@ NAV_PIXIV = _img('logo', 'Fa6BrandsPixiv.png')                    # 视频 → P
 NAV_YOUTUBE = _img('logo', 'LogosYoutube.png')                    # 视频 → YouTube 导航图标
 NAV_BILIBILI = _img('logo', 'StreamlineUltimateBilibiliLogoBold.png')  # 视频 → 哔哩哔哩 导航图标
 NAV_PEOPLE_LEVEL = _img('logo', 'zs_common_level.png')            # 人物页面等级图标
+NAV_EHENTAI = _img('logo', 'EhViewer.png')            # 人物页面等级图标
+NAV_JMCOMIC = _img('logo', 'LogoJM.png')            # 人物页面等级图标
 MAIN_GLASS_BG = _img('background', 'background-2-2.jpg')          # 主窗口全局磨砂背景层
 
 # ═══════════════════════════════════════════

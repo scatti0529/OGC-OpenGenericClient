@@ -26,11 +26,14 @@ from PyQt5.QtWidgets import (
 from qfluentwidgets import (
     CardWidget, FluentIcon as FIF, PushButton, PrimaryPushButton,
     CaptionLabel, SubtitleLabel, TextEdit, ProgressBar,
-    BodyLabel, SpinBox, ComboBox as FluentComboBox, InfoBar,
+    BodyLabel, SpinBox, ComboBox as FluentComboBox, InfoBar, InfoBarPosition,
     IndeterminateProgressBar, isDarkTheme,
 )
 
 from services.douyin_service import DouyinDownloader
+from services.douyin_subscription import (
+    subscribe as douyin_subscribe, is_subscribed as douyin_is_subscribed,
+)
 from pages.video.douyin_dialogs import (
     VideoConfigDialog, DouyinLogDialog, DouyinFeatureDialog,
     QualitySelectionDialog, show_info, show_success, show_error,
@@ -38,6 +41,7 @@ from pages.video.douyin_dialogs import (
 from core.config import config as CFG
 from ui.widgets.theme import theme_color
 from ui.widgets.ui_utils import install_hover_tip
+from pages.video.video_mini_window import VideoMiniDownloadWindow
 
 
 # ═══════════════════════════════════════════════════════════
@@ -121,6 +125,11 @@ class ParseSingleWorker(QThread):
         try:
             info = self.downloader.parse_single(self.url)
             info["url"] = self.url
+            try:
+                from core.database import record_usage
+                record_usage('video', 'parse', 'douyin')
+            except Exception:
+                pass
             self.finished.emit(info, self.url)
         except Exception as e:
             self.error.emit(f"解析异常：{str(e)}", self.url)
@@ -148,15 +157,55 @@ class ParseUserWorker(QThread):
                     self.error.emit("无法从视频解析主页")
                     return
                 urls = parser.get_user_aweme_urls(user_home, max_pages=self.max_pages)
+                try:
+                    from core.database import record_usage
+                    record_usage('video', 'parse', 'douyin')
+                except Exception:
+                    pass
                 self.result.emit(urls, user_home)
                 return
             urls = parser.get_user_aweme_urls(url, max_pages=self.max_pages)
             if not urls:
                 self.error.emit("解析主页列表失败")
                 return
+            try:
+                from core.database import record_usage
+                record_usage('video', 'parse', 'douyin')
+            except Exception:
+                pass
             self.result.emit(urls, url)
         except Exception as e:
             self.error.emit(f"主页解析异常：{str(e)}")
+
+
+class SubscribeAuthorWorker(QThread):
+    """获取作者资料线程（订阅作者前拉取主页信息）"""
+    finished = pyqtSignal(dict)          # author profile
+    error = pyqtSignal(str)
+
+    def __init__(self, downloader: DouyinDownloader, url: str, parent=None):
+        super().__init__(parent)
+        self.downloader = downloader
+        self.url = url
+
+    def run(self):
+        try:
+            parser = self.downloader._get_parser()
+            url = self.url
+            if "douyin.com/video/" in url or "v.douyin.com/" in url:
+                user_home = parser.get_user_home_from_video_url(url)
+                if not user_home:
+                    self.error.emit("无法从视频反查作者主页")
+                    return
+            else:
+                user_home = url
+            profile = parser.get_user_profile(user_home)
+            if not profile:
+                self.error.emit("获取作者信息失败，请检查 Cookie")
+                return
+            self.finished.emit(profile)
+        except Exception as e:
+            self.error.emit(f"获取作者信息异常：{str(e)}")
 
 
 class DownloadWorker(QThread):
@@ -552,6 +601,11 @@ class DouyinPage(QScrollArea):
         self._MAX_CONCURRENT = MAX_CONCURRENT_PARSE
         self._log_dialog = None
         self._downloader = None
+        self._subscribe_worker = None
+        self._author_profile = None
+        self._last_author_url = ""
+        self._author_from_first_video = False  # 是否从单视频解析的第一个卡片推断作者
+        self._mini_window = None
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -568,6 +622,71 @@ class DouyinPage(QScrollArea):
 
         self._build_input_card()
         self._build_results_area()
+
+        # ── 离线/在线媒体查看（图片与视频分开，左侧文件列表）──
+        self._wrap_with_offline_viewer('douyin', '抖音')
+
+    def _wrap_with_offline_viewer(self, platform: str, display_name: str):
+        """把现有「解析下载」视图包进选项卡，并追加「离线查看」页。"""
+        from pages.video.media_offline import MediaOfflineViewer
+
+        parse_widget = QWidget(self.view)
+        parse_layout = QVBoxLayout(parse_widget)
+        parse_layout.setContentsMargins(0, 0, 0, 0)
+        parse_layout.setSpacing(12)
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+            try:
+                stretch = item.stretch()
+            except Exception:
+                stretch = 0
+            w = item.widget()
+            if w is not None:
+                parse_layout.addWidget(w, stretch)
+            elif item.layout() is not None:
+                parse_layout.addLayout(item.layout(), stretch)
+            del item
+
+        self._view_tabs = QHBoxLayout()
+        self._view_tabs.setSpacing(8)
+        self.parse_view_btn = PushButton('解析下载', self.view)
+        self.offline_view_btn = PushButton('离线查看', self.view)
+        self.parse_view_btn.clicked.connect(lambda: self._set_view(0))
+        self.offline_view_btn.clicked.connect(lambda: self._set_view(1))
+        self._view_tabs.addWidget(self.parse_view_btn)
+        self._view_tabs.addWidget(self.offline_view_btn)
+        self._view_tabs.addStretch(1)
+
+        self._root_stack = QStackedWidget(self.view)
+        self._offline_viewer = MediaOfflineViewer(platform, display_name, self)
+        self._offline_viewer.back_requested.connect(lambda: self._set_view(0))
+        self._root_stack.addWidget(parse_widget)
+        self._root_stack.addWidget(self._offline_viewer)
+
+        self.layout.addLayout(self._view_tabs)
+        self.layout.addWidget(self._root_stack, 1)
+        self._set_view(0)
+
+    def _set_view(self, index: int):
+        """切换 解析下载 / 离线查看 视图。离开离线查看时暂停视频。"""
+        if index == 0 and hasattr(self, '_offline_viewer'):
+            try:
+                self._offline_viewer.pause()
+            except Exception:
+                pass
+        self._root_stack.setCurrentIndex(index)
+        self.parse_view_btn.setProperty('checked', index == 0)
+        self.offline_view_btn.setProperty('checked', index == 1)
+        for btn in (self.parse_view_btn, self.offline_view_btn):
+            checked = btn.property('checked')
+            btn.setStyleSheet(
+                "QPushButton { background: #28afe9; color: white; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+                if checked else
+                "QPushButton { background: transparent; color: #8a8a8a; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+            )
+            btn.update()
 
     # ── 下载器 ──
     def _get_downloader(self) -> DouyinDownloader:
@@ -623,6 +742,18 @@ class DouyinPage(QScrollArea):
         title_row.addWidget(self.max_pages_spin)
 
         title_row.addStretch()
+
+        self.subscriptions_btn = PushButton(FIF.HEART, " 订阅管理", input_card)
+        self.subscriptions_btn.setFixedHeight(28)
+        self.subscriptions_btn.clicked.connect(self._open_subscription_page)
+        title_row.addWidget(self.subscriptions_btn)
+
+        # 迷你下载窗口开关按钮（输入链接直接解析下载，不生成卡片）
+        self.mini_window_btn = PushButton(FIF.DOWNLOAD, "迷你窗口", input_card)
+        self.mini_window_btn.setFixedHeight(28)
+        self.mini_window_btn.setToolTip("打开迷你下载窗口：输入链接直接解析并下载，不在页面生成卡片")
+        self.mini_window_btn.clicked.connect(self._toggle_mini_window)
+        title_row.addWidget(self.mini_window_btn)
 
         input_layout.addLayout(title_row)
 
@@ -748,6 +879,9 @@ class DouyinPage(QScrollArea):
 
         self.layout.addWidget(input_card)
 
+        # 作者信息卡（解析主页/视频后显示作者信息与订阅按钮）
+        self._build_author_card()
+
         # 悬停提示
         install_hover_tip(self.url_edit, "链接输入", "粘贴抖音分享链接或完整分享文本")
         install_hover_tip(self.paste_btn, "粘贴", "清空并粘贴剪贴板内容")
@@ -756,6 +890,56 @@ class DouyinPage(QScrollArea):
         install_hover_tip(self.config_btn, "配置", "打开视频配置弹窗")
         install_hover_tip(self.feature_btn, "功能清单", "查看功能说明")
         install_hover_tip(self.log_btn, "下载日志", "查看下载日志")
+        install_hover_tip(self.subscriptions_btn, "订阅管理", "查看已订阅的抖音作者及更新状态")
+
+    def _build_author_card(self):
+        """构建作者信息卡（解析主页/视频后显示作者信息与订阅按钮）"""
+        self.author_card = CardWidget(self.view)
+        author_layout = QVBoxLayout(self.author_card)
+        author_layout.setSpacing(10)
+        author_layout.setContentsMargins(20, 16, 20, 16)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        title = SubtitleLabel("👤 作者信息", self.author_card)
+        title.setStyleSheet("font-size: 15px; font-weight: bold;")
+        header.addWidget(title)
+        header.addStretch()
+
+        self.author_name_label = CaptionLabel("未解析", self.author_card)
+        self.author_name_label.setStyleSheet(
+            "color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 12px;")
+        header.addWidget(self.author_name_label)
+        author_layout.addLayout(header)
+
+        self.author_info_label = CaptionLabel("", self.author_card)
+        self.author_info_label.setStyleSheet(
+            "color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 12px;")
+        self.author_info_label.setWordWrap(True)
+        self.author_info_label.setVisible(False)
+        author_layout.addWidget(self.author_info_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self.subscribe_btn = PrimaryPushButton(FIF.HEART, " 订阅该作者", self.author_card)
+        self.subscribe_btn.setFixedHeight(30)
+        self.subscribe_btn.clicked.connect(self._subscribe_author)
+        self.subscribe_btn.setEnabled(False)
+        btn_row.addWidget(self.subscribe_btn)
+
+        self.open_author_btn = PushButton(FIF.LINK, " 打开主页", self.author_card)
+        self.open_author_btn.setFixedHeight(30)
+        self.open_author_btn.clicked.connect(self._open_author_home)
+        self.open_author_btn.setEnabled(False)
+        btn_row.addWidget(self.open_author_btn)
+        btn_row.addStretch()
+        author_layout.addLayout(btn_row)
+
+        self.author_card.setVisible(False)
+        self.layout.addWidget(self.author_card)
+
+        install_hover_tip(self.subscribe_btn, "订阅作者", "将该作者加入订阅列表")
+        install_hover_tip(self.open_author_btn, "打开主页", "在浏览器中打开该作者主页")
 
     def _apply_textedit_style(self):
         """完善输入框 hover/focus 边框高亮样式（强化交互反馈）"""
@@ -909,6 +1093,171 @@ class DouyinPage(QScrollArea):
         if self._log_dialog is not None and self._log_dialog.isVisible():
             self._log_dialog.append_log(text)
 
+    # ── 订阅相关 ──
+    # ---------------- 迷你下载窗口 ----------------
+    def _toggle_mini_window(self):
+        """打开/隐藏迷你下载窗口（输入链接直接解析下载，不生成卡片）。"""
+        try:
+            if self._mini_window is None:
+                self._mini_window = VideoMiniDownloadWindow(
+                    'douyin', '抖音', self.window())
+                self._mini_window.set_owner(self.window())
+            if self._mini_window.isVisible():
+                self._mini_window.hide()
+            else:
+                text = self.url_edit.toPlainText().strip()
+                if text:
+                    self._mini_window.url_edit.setPlainText(text)
+                self._mini_window.set_sessdata('')
+                self._mini_window.show()
+                self._mini_window.raise_()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _open_subscription_page(self):
+        """跳转到订阅管理页面"""
+        win = self.window()
+        if win is not None and hasattr(win, 'videoPage_douyin_subscription'):
+            win.switchTo(win.videoPage_douyin_subscription)
+        else:
+            show_info(self, "提示", "订阅管理页面未就绪")
+
+    def open_user_home_and_parse(self, url: str):
+        """由订阅页调用：切换到「主页批量」模式，填入主页链接并自动解析该作者作品"""
+        if not url:
+            return
+        # 切换到主页批量模式
+        for i in range(self.mode_combo.count()):
+            if self.mode_combo.itemData(i) == "user":
+                self.mode_combo.setCurrentIndex(i)
+                break
+        self.url_edit.setPlainText(url)
+        self._on_parse()
+
+    def _open_author_home(self):
+        """打开作者主页"""
+        profile = self._author_profile
+        if not profile:
+            return
+        url = profile.get('user_home') or ""
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def _subscribe_author(self):
+        """订阅当前作者"""
+        profile = self._author_profile
+        if not profile:
+            show_info(self, "提示", "暂无作者信息")
+            return
+
+        sec_uid = profile.get('sec_uid') or ''
+        if not sec_uid:
+            show_error(self, "订阅失败", "作者信息缺少 sec_uid")
+            return
+
+        if douyin_is_subscribed(sec_uid):
+            show_info(self, "已订阅", "该作者已在订阅列表中")
+            return
+
+        # 获取最新作品 id 用于更新判断
+        last_aweme_id = None
+        try:
+            parser = self._get_downloader()._get_parser()
+            last_aweme_id = parser.get_latest_aweme_id(
+                profile.get('user_home') or '', max_pages=1)
+        except Exception:
+            pass
+
+        if douyin_subscribe(profile, last_aweme_id):
+            self.subscribe_btn.setText(" 已订阅")
+            self.subscribe_btn.setEnabled(False)
+            show_success(self, "订阅成功", f"作者「{profile.get('nickname') or sec_uid}」已加入订阅列表")
+        else:
+            show_error(self, "订阅失败", "写入订阅数据失败")
+
+    def _show_author_info_from_result(self, result: dict, user_home: str):
+        """从解析结果构建基础作者信息并展示（等待完整资料异步返回）"""
+        sec_uid = result.get("author_sec_uid") or ''
+        if not sec_uid:
+            return
+        profile = {
+            "sec_uid": sec_uid,
+            "nickname": result.get("author_nickname") or "",
+            "signature": result.get("author_signature") or "",
+            "avatar_url": result.get("avatar_url") or "",
+            "aweme_count": 0,
+            "follower_count": 0,
+            "user_home": user_home,
+        }
+        self._show_author_info(profile)
+
+    def _show_author_info(self, profile: dict):
+        """展示作者信息卡"""
+        if not profile:
+            return
+        self._author_profile = profile
+        self._last_author_url = profile.get('user_home') or self._last_author_url
+
+        nickname = profile.get('nickname') or '未知作者'
+        self.author_name_label.setText(nickname)
+
+        info_parts = []
+        if profile.get('signature'):
+            sig = profile['signature']
+            if len(sig) > 60:
+                sig = sig[:60] + '...'
+            info_parts.append(sig)
+        stat = f"作品 {profile.get('aweme_count') or 0} · 粉丝 {profile.get('follower_count') or 0}"
+        info_parts.append(stat)
+        self.author_info_label.setText("  |  ".join(info_parts))
+        self.author_info_label.setVisible(True)
+
+        sec_uid = profile.get('sec_uid') or ''
+        if douyin_is_subscribed(sec_uid):
+            self.subscribe_btn.setText(" 已订阅")
+            self.subscribe_btn.setEnabled(False)
+        else:
+            self.subscribe_btn.setText(" 订阅该作者")
+            self.subscribe_btn.setEnabled(True)
+        self.open_author_btn.setEnabled(True)
+        self.author_card.setVisible(True)
+
+    def _hide_author_card(self):
+        """隐藏作者信息卡（解析前清空）"""
+        self._author_profile = None
+        self.author_card.setVisible(False)
+        self.author_name_label.setText("未解析")
+        self.author_info_label.setVisible(False)
+        self.subscribe_btn.setEnabled(False)
+        self.subscribe_btn.setText(" 订阅该作者")
+        self.open_author_btn.setEnabled(False)
+
+    def _fetch_author_profile(self, url: str):
+        """异步获取作者资料并展示"""
+        if self._subscribe_worker is not None and self._subscribe_worker.isRunning():
+            self._subscribe_worker.wait(300)
+        self.status_label.setVisible(True)
+        self.status_label.setText("正在获取作者信息...")
+        self._subscribe_worker = SubscribeAuthorWorker(
+            self._get_downloader(), url, self)
+        self._subscribe_worker.finished.connect(self._on_author_profile)
+        self._subscribe_worker.error.connect(self._on_author_profile_error)
+        self._subscribe_worker.start()
+
+    def _on_author_profile(self, profile: dict):
+        self._subscribe_worker = None
+        self.status_label.setVisible(False)
+        self._show_author_info(profile)
+
+    def _on_author_profile_error(self, msg: str):
+        self._subscribe_worker = None
+        self.status_label.setVisible(False)
+        # 获取作者信息失败不阻断解析流程，仅提示
+        InfoBar.warning("获取作者信息失败", msg, orient=Qt.Horizontal,
+                        isClosable=True, position=InfoBarPosition.TOP,
+                        duration=3000, parent=self.window())
+
     # ── 解析 ──
     def _on_parse(self):
         if self._parsing or self._queue_parsing:
@@ -964,6 +1313,7 @@ class DouyinPage(QScrollArea):
 
     def _clear_before_parse(self):
         self.result_area.clear_cards()
+        self._hide_author_card()
         self.status_label.setVisible(True)
         self.loading_bar.setVisible(True)
         self.loading_bar.start()
@@ -984,6 +1334,14 @@ class DouyinPage(QScrollArea):
 
         # 生成卡片
         self.result_area.add_card(result, self.result_area.cards_count() + 1, 1)
+
+        # 单内容模式：尝试展示作者信息
+        if self.mode_combo.itemData(self.mode_combo.currentIndex()) == "single":
+            sec_uid = result.get("author_sec_uid")
+            if sec_uid and not self._author_profile:
+                user_home = f"https://www.douyin.com/user/{sec_uid}"
+                self._show_author_info_from_result(result, user_home)
+                self._fetch_author_profile(user_home)
 
         self._update_parse_progress()
         self._launch_next_parser()
@@ -1052,6 +1410,9 @@ class DouyinPage(QScrollArea):
         self._parse_queue = list(urls)
         self._parse_threads = []
 
+        # 后台获取作者资料，用于订阅
+        self._fetch_author_profile(user_home)
+
         # 启动并发解析
         for _ in range(min(self._MAX_CONCURRENT, len(self._parse_queue))):
             self._launch_next_parser()
@@ -1097,4 +1458,11 @@ class DouyinPage(QScrollArea):
     def closeEvent(self, event):
         self._stop_parsing()
         self.result_area.clear_cards()
+        # 关闭离线/在线媒体查看器的后台线程与播放器
+        try:
+            viewer = getattr(self, '_offline_viewer', None)
+            if viewer is not None and hasattr(viewer, 'shutdown'):
+                viewer.shutdown()
+        except Exception:
+            pass
         super().closeEvent(event)

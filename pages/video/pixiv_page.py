@@ -124,6 +124,11 @@ class PixivParseThread(QThread):
             if not data_list:
                 self.error.emit('未找到可下载的作品')
                 return
+            try:
+                from core.database import record_usage
+                record_usage('video', 'parse', 'pixiv')
+            except Exception:
+                pass
             self.finished.emit(data_list)
         except LoginRequiredError as e:
             self.error.emit(f'未登录: {e}')
@@ -157,6 +162,11 @@ class PixivDownloadThread(QThread):
                 skip_manga=self.skip_manga,
                 max_images=self.max_images,
             )
+            try:
+                from core.database import record_usage
+                record_usage('video', 'download', 'pixiv')
+            except Exception:
+                pass
             self.done.emit(True, "")
         except Exception as e:
             self.done.emit(False, str(e))

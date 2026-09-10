@@ -3,8 +3,12 @@
 import sys
 import os
 
-# 添加 douyinDL-main/src 到 sys.path
-SRC_DIR = r'E:\项目程序\PY项目\测试程序\douyinDL-main\src'
+# 添加 douyinDL-main/src 到 sys.path（通过环境变量 DOUYINDL_SRC_DIR 指定，
+# 或放到与本项目同级的 douyinDL-main/src 目录下）
+SRC_DIR = os.environ.get(
+    'DOUYINDL_SRC_DIR',
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 '..', 'douyinDL-main', 'src'))
 sys.path.insert(0, SRC_DIR)
 
 try:

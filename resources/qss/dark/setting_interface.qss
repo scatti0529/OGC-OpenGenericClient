@@ -1,17 +1,19 @@
+/* OGC 设置页 · 深色主题
+   页面容器统一透明，磨砂背景由窗口级 FrostedPanel 透出，
+   避免死灰不透明背景覆盖「深蓝玻璃」全局质感。 */
+
 SettingInterface, #scrollWidget {
-    background-color: rgb(39, 39, 39);
+    background-color: transparent;
 }
 
 QScrollArea {
     border: none;
-    background-color: rgb(39, 39, 39);
+    background-color: transparent;
 }
-
 
 /* 标签 */
 QLabel#settingLabel {
-    font: 33px 'Microsoft YaHei Light';
+    font: 33px 'Segoe UI Semibold', 'Microsoft YaHei Semibold';
     background-color: transparent;
-    color: white;
+    color: #F2F7FB;
 }
-

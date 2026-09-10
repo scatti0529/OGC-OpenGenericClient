@@ -146,16 +146,7 @@ class Ui_Form(object):
         self.register_scroll.setMaximumHeight(480)
 
         self.register_form_widget = QWidget()
-        self.register_form_widget.setStyleSheet("""
-            QWidget { background-color: transparent; }
-            QLineEdit { 
-                color: #000000; 
-                background-color: #ffffff; 
-                border: 1px solid #cccccc;
-                border-radius: 4px;
-                padding: 4px 8px;
-            }
-        """)
+        self.register_form_widget.setStyleSheet(self._register_form_qss())
         self.register_form_layout = QVBoxLayout(self.register_form_widget)
         self.register_form_layout.setSpacing(5)
         self.register_form_layout.setContentsMargins(0, 0, 0, 0)
@@ -305,6 +296,30 @@ class Ui_Form(object):
         self.reg_avatar_btn.setText(_translate("Form", "选择头像（必选）"))
         self.register_btn.setText(_translate("Form", "注册"))
         self.back_to_login_btn.setText(_translate("Form", "已有账号？返回登录"))
+
+    @staticmethod
+    def _register_form_qss():
+        """注册表单样式：跟随深浅主题，避免深色主题下出现白色输入框"""
+        from ui.widgets.theme import theme_color, font_ui, radius_card
+        text = theme_color('#303133', '#E0E0E0')
+        field_bg = theme_color('rgba(255,255,255,0.9)', 'rgba(255,255,255,0.10)')
+        border = theme_color('#D0D3D9', 'rgba(255,255,255,0.18)')
+        focus_border = theme_color('#28AFE9', '#4FC3F7')
+        return (
+            "QWidget { background-color: transparent; }"
+            "QLabel { background-color: transparent; }"
+            f"QLineEdit {{"
+            f" color: {text};"
+            f" background-color: {field_bg};"
+            f" border: 1px solid {border};"
+            f" border-radius: {radius_card()};"
+            f" padding: 7px 10px;"
+            f" font-family: {font_ui()};"
+            f" font-size: 13px;"
+            " }"
+            f"QLineEdit:focus {{ border: 1px solid {focus_border}; }}"
+            f"QLineEdit[echoMode=\"2\"] {{ letter-spacing: 2px; }}"
+        )
 
 from qfluentwidgets import BodyLabel, CheckBox, HyperlinkButton, LineEdit, PrimaryPushButton, PushButton
 from resources import resource_rc

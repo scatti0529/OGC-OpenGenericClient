@@ -22,7 +22,7 @@ from qfluentwidgets import (
     CardWidget, FluentIcon as FIF, InfoBar, InfoBarPosition,
     SegmentedWidget, LineEdit, TextEdit, PrimaryPushButton, PushButton,
     BodyLabel, SubtitleLabel, ProgressBar, StateToolTip,
-    ScrollArea, CaptionLabel, StrongBodyLabel, IconWidget
+    ScrollArea, CaptionLabel, StrongBodyLabel, IconWidget, isDarkTheme
 )
 
 from services.download_manager import (
@@ -30,6 +30,8 @@ from services.download_manager import (
     get_download_root,
 )
 from services.platform_parsers import get_parser, MediaItem
+
+from pages.video.media_offline import MediaOfflineViewer
 
 from core.resource_paths import (
     VIDEO_DOUYIN_ICON as _ICON_DOUYIN,
@@ -42,6 +44,7 @@ from core.resource_paths import (
 )
 from ui.widgets.theme import theme_color, on_theme_changed, ensure_theme_connected
 from ui.widgets.ui_utils import install_hover_tip
+from pages.video.video_mini_window import VideoMiniDownloadWindow
 
 
 # ═══════════════════════════════════════════════════════════
@@ -79,6 +82,11 @@ class ParseThread(QThread):
             if not items:
                 self.error.emit("未找到可下载的媒体，请检查链接")
                 return
+            try:
+                from core.database import record_usage
+                record_usage('video', 'parse', self.platform)
+            except Exception:
+                pass
             self.finished.emit(items)
         except Exception as e:
             self.error.emit(f"解析失败: {str(e)}")
@@ -499,6 +507,8 @@ class PlatformPage(QScrollArea):
         # 下载队列（依次串行下载）
         self._download_queue = []
         self._queue_active = False
+        # 迷你下载窗口（输入链接直接解析下载，不生成卡片）
+        self._mini_window = None
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -523,6 +533,12 @@ class PlatformPage(QScrollArea):
         titleLabel.setStyleSheet("font-size: 16px; font-weight: bold;")
         titleRow.addWidget(titleLabel)
         titleRow.addStretch()
+        # 迷你下载窗口开关按钮（输入链接直接解析下载，不生成卡片）
+        self.mini_window_btn = PushButton(FIF.DOWNLOAD, "迷你窗口", inputCard)
+        self.mini_window_btn.setFixedHeight(30)
+        self.mini_window_btn.setToolTip("打开迷你下载窗口：输入链接直接解析并下载，不在页面生成卡片")
+        self.mini_window_btn.clicked.connect(self._toggle_mini_window)
+        titleRow.addWidget(self.mini_window_btn)
         inputLayout.addLayout(titleRow)
 
         urlRow = QHBoxLayout()
@@ -607,6 +623,72 @@ class PlatformPage(QScrollArea):
         self.emptyLabel.setStyleSheet("color: " + theme_color('#AAAAAA', '#666666') + "; font-size: 14px;")
         self.layout.addWidget(self.emptyLabel)
 
+        # ── 离线/在线媒体查看（图片与视频分开，左侧文件列表）──
+        self._wrap_with_offline_viewer()
+
+    def _wrap_with_offline_viewer(self):
+        """把现有「解析下载」视图包进选项卡，并追加「离线查看」页。"""
+        # 1. 把当前 self.layout 中已添加的内容移入 parse 视图容器
+        parse_widget = QWidget(self.view)
+        parse_layout = QVBoxLayout(parse_widget)
+        parse_layout.setContentsMargins(0, 0, 0, 0)
+        parse_layout.setSpacing(12)
+        while self.layout.count():
+            item = self.layout.takeAt(0)
+            try:
+                stretch = item.stretch()
+            except Exception:
+                stretch = 0
+            w = item.widget()
+            if w is not None:
+                parse_layout.addWidget(w, stretch)
+            elif item.layout() is not None:
+                parse_layout.addLayout(item.layout(), stretch)
+            del item
+
+        # 2. 选项卡按钮（解析下载 / 离线查看）
+        self._view_tabs = QHBoxLayout()
+        self._view_tabs.setSpacing(8)
+        self.parse_view_btn = PushButton('解析下载', self.view)
+        self.offline_view_btn = PushButton('离线查看', self.view)
+        self.parse_view_btn.clicked.connect(lambda: self._set_view(0))
+        self.offline_view_btn.clicked.connect(lambda: self._set_view(1))
+        self._view_tabs.addWidget(self.parse_view_btn)
+        self._view_tabs.addWidget(self.offline_view_btn)
+        self._view_tabs.addStretch(1)
+
+        # 3. 堆叠：0=解析下载，1=离线/在线媒体查看
+        self._root_stack = QStackedWidget(self.view)
+        self._offline_viewer = MediaOfflineViewer(self.platform, self.display_name, self)
+        self._offline_viewer.back_requested.connect(lambda: self._set_view(0))
+        self._root_stack.addWidget(parse_widget)
+        self._root_stack.addWidget(self._offline_viewer)
+
+        self.layout.addLayout(self._view_tabs)
+        self.layout.addWidget(self._root_stack, 1)
+        self._set_view(0)
+
+    def _set_view(self, index: int):
+        """切换 解析下载 / 离线查看 视图。离开离线查看时暂停视频。"""
+        if index == 0 and hasattr(self, '_offline_viewer'):
+            try:
+                self._offline_viewer.pause()
+            except Exception:
+                pass
+        self._root_stack.setCurrentIndex(index)
+        self.parse_view_btn.setProperty('checked', index == 0)
+        self.offline_view_btn.setProperty('checked', index == 1)
+        for btn in (self.parse_view_btn, self.offline_view_btn):
+            checked = btn.property('checked')
+            btn.setStyleSheet(
+                "QPushButton { background: #28afe9; color: white; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+                if checked else
+                "QPushButton { background: transparent; color: #8a8a8a; border: none;"
+                " border-radius: 6px; padding: 4px 14px; }"
+            )
+            btn.update()
+
     def _dir_hint(self):
         root = get_download_root()
         return f"📁 下载目录: {os.path.join(root, self.platform + '-download')}（图片/视频/音频自动分类）"
@@ -629,7 +711,41 @@ class PlatformPage(QScrollArea):
             except (RuntimeError, Exception):
                 pass
         self._active_parsers = []
+        # 关闭离线/在线媒体查看器的后台线程与播放器
+        try:
+            viewer = getattr(self, '_offline_viewer', None)
+            if viewer is not None and hasattr(viewer, 'shutdown'):
+                viewer.shutdown()
+        except Exception:
+            pass
         super().closeEvent(event)
+
+    # ---------------- 迷你下载窗口 ----------------
+    def _toggle_mini_window(self):
+        """打开/隐藏迷你下载窗口（输入链接直接解析下载，不生成卡片）。"""
+        try:
+            if self._mini_window is None:
+                self._mini_window = VideoMiniDownloadWindow(
+                    self.platform, self.display_name, self.window())
+                self._mini_window.set_owner(self.window())
+            if self._mini_window.isVisible():
+                self._mini_window.hide()
+            else:
+                # 同步主输入框内容到迷你窗口
+                text = self.urlEdit.toPlainText().strip()
+                if text:
+                    self._mini_window.url_edit.setPlainText(text)
+                # 同步 bilibili SESSDATA（若平台有）
+                try:
+                    self._mini_window.set_sessdata(
+                        self.sessdataEdit.text().strip() if self.platform == 'bilibili' else '')
+                except Exception:
+                    pass
+                self._mini_window.show()
+                self._mini_window.raise_()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     def _paste_from_clipboard(self):
         """清空输入框并填入刚刚复制的内容"""
@@ -1026,14 +1142,14 @@ class PlatformPage(QScrollArea):
 class MultiPlatformVideoInterface(QScrollArea):
     """视频主页面：显示六个平台入口卡片，点击跳转到对应子模块"""
 
-    # 平台配置: (key, 显示名, 图标路径)
+    # 平台配置: (key, 显示名, 描述, 图标路径)
     PLATFORMS = [
-        ('douyin', '抖音', _ICON_DOUYIN),
-        ('bilibili', '哔哩哔哩', _ICON_BILI),
-        ('twitter', '推特(X)', _ICON_X),
-        ('pixiv', 'Pixiv', _ICON_Pixiv),
-        ('xvideo', 'Xvideo', _ICON_Xvideo),
-        ('youtube', 'YouTube', _ICON_Youtube),
+        ('douyin', '抖音', '短视频 / 图集解析', _ICON_DOUYIN),
+        ('bilibili', '哔哩哔哩', '视频 / 番剧 / 音频', _ICON_BILI),
+        ('twitter', '推特(X)', '推文图片 / 视频', _ICON_X),
+        ('pixiv', 'Pixiv', '插画 / 漫画下载', _ICON_Pixiv),
+        ('xvideo', 'Xvideo', '视频解析下载', _ICON_Xvideo),
+        ('youtube', 'YouTube', '高清视频解析', _ICON_Youtube),
     ]
 
     def __init__(self, parent=None):
@@ -1054,14 +1170,19 @@ class MultiPlatformVideoInterface(QScrollArea):
         self.layout.setContentsMargins(36, 0, 36, 36)
         self.setWidget(self.view)
 
+        # 主题切换自动刷新入口卡片样式
+        ensure_theme_connected()
+        on_theme_changed(self._apply_theme_style)
+
         # 标题
         titleLabel = SubtitleLabel("多平台解析下载", self.view)
         titleLabel.setStyleSheet("font-size: 24px; font-weight: bold;")
         self.layout.addWidget(titleLabel)
 
-        descLabel = CaptionLabel("选择平台解析并下载视频 / 图片 / 音频，下载文件自动分类保存", self.view)
-        descLabel.setStyleSheet("color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 13px;")
-        self.layout.addWidget(descLabel)
+        self.titleLabel = titleLabel
+        self.descLabel = CaptionLabel("选择平台解析并下载视频 / 图片 / 音频，下载文件自动分类保存", self.view)
+        self.descLabel.setObjectName('videoDescLabel')
+        self.layout.addWidget(self.descLabel)
 
         self.layout.addSpacing(16)
 
@@ -1072,11 +1193,14 @@ class MultiPlatformVideoInterface(QScrollArea):
         self.layout.addLayout(self.cardsGrid)
 
         # 创建平台入口卡片
-        for i, (key, name, icon_path) in enumerate(self.PLATFORMS):
-            card = self._create_platform_card(key, name, icon_path)
+        for i, (key, name, desc, icon_path) in enumerate(self.PLATFORMS):
+            card = self._create_platform_card(key, name, desc, icon_path)
             self._platform_cards[key] = card
             row, col = divmod(i, 3)
             self.cardsGrid.addWidget(card, row, col)
+
+        # 卡片创建完成后应用初始样式（描述标签 + 平台卡片配色）
+        self._apply_theme_style()
 
         self.layout.addStretch()
 
@@ -1091,43 +1215,53 @@ class MultiPlatformVideoInterface(QScrollArea):
         for key, card in self._platform_cards.items():
             card.setVisible(key in allowed_keys)
 
-    def _create_platform_card(self, key: str, name: str, icon_path: str):
+    def _create_platform_card(self, key: str, name: str, desc: str, icon_path: str):
         """创建单个平台入口卡片，点击跳转到子模块"""
         card = CardWidget(self.view)
-        card.setFixedSize(280, 160)
+        card.setFixedSize(280, 150)
         card.setCursor(Qt.PointingHandCursor)
+        card.setObjectName('platformCard')
 
         cardLayout = QVBoxLayout(card)
-        cardLayout.setSpacing(10)
-        cardLayout.setAlignment(Qt.AlignCenter)
+        cardLayout.setContentsMargins(18, 20, 18, 18)
+        cardLayout.setSpacing(8)
+        cardLayout.setAlignment(Qt.AlignTop)
 
-        # 图标
-        iconWidget = QLabel(card)
+        # 图标（带品牌淡蓝玻璃圆角底座）
+        iconWrapper = QWidget(card)
+        iconWrapper.setFixedSize(46, 46)
+        iconWrapper.setObjectName('iconWrapper')
+        wrapperLayout = QHBoxLayout(iconWrapper)
+        wrapperLayout.setContentsMargins(0, 0, 0, 0)
+        wrapperLayout.setAlignment(Qt.AlignCenter)
+
+        iconWidget = QLabel(iconWrapper)
         iconWidget.setAlignment(Qt.AlignCenter)
-        iconWidget.setFixedSize(64, 64)
+        iconWidget.setFixedSize(30, 30)
         if icon_path and os.path.exists(icon_path):
-            pix = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pix = QPixmap(icon_path).scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             iconWidget.setPixmap(pix)
         else:
-            # 使用 Fluent 图标
-            icon_map = {
-                'pixiv': FIF.PHOTO,
-                'xvideo': FIF.VIDEO,
-                'youtube': FIF.PLAY,
-            }
+            icon_map = {'pixiv': FIF.PHOTO, 'xvideo': FIF.VIDEO, 'youtube': FIF.PLAY}
             icon = icon_map.get(key, FIF.VIDEO)
-            fl_icon = IconWidget(icon, card)
-            fl_icon.setFixedSize(48, 48)
-            fl_icon.setStyleSheet("color: #28afe9; background: transparent;")
-            cardLayout.addWidget(fl_icon, 0, Qt.AlignCenter)
-            cardLayout.addWidget(BodyLabel(name, card), 0, Qt.AlignCenter)
-            card.clicked = lambda: self._navigate(key)
-            card.mouseReleaseEvent = lambda e: self._navigate(key)
-            return card
+            iconWidget = IconWidget(icon, iconWrapper)
+            iconWidget.setFixedSize(28, 28)
+            iconWidget.setStyleSheet("color: #28afe9; background: transparent;")
+        wrapperLayout.addWidget(iconWidget)
+        cardLayout.addWidget(iconWrapper, 0, Qt.AlignLeft)
 
-        cardLayout.addWidget(iconWidget, 0, Qt.AlignCenter)
-        cardLayout.addWidget(BodyLabel(name, card), 0, Qt.AlignCenter)
-        card.clicked = lambda: self._navigate(key)
+        # 平台名 + 描述
+        nameLabel = BodyLabel(name, card)
+        nameLabel.setStyleSheet("font-size: 15px; font-weight: 600;")
+        cardLayout.addWidget(nameLabel)
+
+        descLabel = CaptionLabel(desc, card)
+        descLabel.setWordWrap(True)
+        descLabel.setStyleSheet("color: " + theme_color('#7A8792', '#9AA7B5') + "; font-size: 12px;")
+        cardLayout.addWidget(descLabel)
+        cardLayout.addStretch(1)
+
+        # 点击跳转（覆盖 mouseReleaseEvent 生效）
         card.mouseReleaseEvent = lambda e: self._navigate(key)
         return card
 
@@ -1144,13 +1278,40 @@ class MultiPlatformVideoInterface(QScrollArea):
 
     # ── 主题切换自动刷新 ──
     def _apply_theme_style(self):
-        """主题切换时刷新标题/描述文字颜色"""
-        subLabel = self.layout.itemAt(1).widget()
-        if subLabel is not None:
-            subLabel.setStyleSheet(
+        """主题切换时刷新标题/描述文字颜色以及入口卡片配色"""
+        if hasattr(self, 'descLabel'):
+            self.descLabel.setStyleSheet(
                 "color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 13px;")
-        # 刷新所有卡片
+
+        if isDarkTheme():
+            card_bg = 'rgba(35, 38, 48, 0.85)'
+            card_border = 'rgba(255, 255, 255, 0.09)'
+            card_hover_bg = 'rgba(44, 50, 64, 0.92)'
+            card_hover_border = 'rgba(76, 195, 247, 0.35)'
+            icon_bg = 'rgba(76, 195, 247, 0.10)'
+        else:
+            card_bg = 'rgba(255, 255, 255, 0.86)'
+            card_border = 'rgba(0, 0, 0, 0.06)'
+            card_hover_bg = 'rgba(248, 252, 254, 0.95)'
+            card_hover_border = 'rgba(14, 140, 192, 0.30)'
+            icon_bg = 'rgba(14, 140, 192, 0.08)'
+
         for card in self._platform_cards.values():
+            card.setStyleSheet(f"""
+                QWidget#platformCard {{
+                    background-color: {card_bg};
+                    border: 1px solid {card_border};
+                    border-radius: 14px;
+                }}
+                QWidget#platformCard:hover {{
+                    background-color: {card_hover_bg};
+                    border: 1px solid {card_hover_border};
+                }}
+                QWidget#iconWrapper {{
+                    background-color: {icon_bg};
+                    border-radius: 12px;
+                }}
+            """)
             card.update()
 
 

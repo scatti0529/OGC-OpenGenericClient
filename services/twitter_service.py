@@ -3,7 +3,7 @@
 
 集成 savetwitter.net 原解析 + gallery-dl 专用备用解析：
 - TwitterParser：savetwitter.net 在线解析（默认方式）
-- TwitterGalleryDLParser：调用 OGC多功能版/twitter 中的 gallery-dl 专用下载器
+- TwitterGalleryDLParser：调用外置 gallery-dl 推特下载器
   （原解析重试 3 次仍失败时自动切换的备用方案）
 
 便于后续单独维护推特平台功能，无需改动聚合层 platform_parsers。
@@ -22,9 +22,11 @@ from services.media_item import MediaItem, sanitize_filename
 # ═══════════════════════════════════════════════════════════
 #  gallery-dl 推特备用解析器
 # ═══════════════════════════════════════════════════════════
-# 独立调用 OGC多功能版/twitter 中的 gallery-dl（--dump-json），
+# 独立调用外置 gallery-dl 推特下载器（--dump-json），
 # 用于在 savetwitter.net 原解析重试 3 次仍失败时作为备用解析手段。
-GALLERY_DL_PROJECT_DIR = r'E:\项目程序\PY项目\测试程序\OGC多功能版\twitter'
+# 目录通过环境变量 GALLERY_DL_TWITTER_DIR 配置；
+# 未配置时由 _resolve_project_dir() 尝试相对定位。
+GALLERY_DL_PROJECT_DIR = os.environ.get('GALLERY_DL_TWITTER_DIR', '')
 
 
 class TwitterGalleryDLParser:
@@ -47,19 +49,21 @@ class TwitterGalleryDLParser:
 
     @staticmethod
     def _resolve_project_dir() -> str:
-        """返回 gallery-dl 项目根目录（存在指定目录时使用，否则尝试相对定位）"""
-        if os.path.isdir(GALLERY_DL_PROJECT_DIR):
+        """返回 gallery-dl 项目根目录
+
+        查找顺序：
+        1. 环境变量 GALLERY_DL_TWITTER_DIR（GALLERY_DL_PROJECT_DIR）
+        2. 与本项目同级的 twitter / gallery-dl 目录
+        3. 本项目根目录下的 twitter 子目录
+        全都没有时返回 ''（调用方会给出可读的提示）。
+        """
+        if GALLERY_DL_PROJECT_DIR and os.path.isdir(GALLERY_DL_PROJECT_DIR):
             return GALLERY_DL_PROJECT_DIR
-        # 兜底：尝试从当前项目相对路径定位
-        alt = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            '..', 'OGC多功能版', 'twitter')
-        if os.path.isdir(alt):
-            return os.path.normpath(alt)
-        # 再兜底：环境变量
-        env = os.environ.get('GALLERY_DL_TWITTER_DIR', '')
-        if env and os.path.isdir(env):
-            return env
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for rel in (('..', 'twitter'), ('..', 'gallery-dl'), ('twitter',)):
+            alt = os.path.normpath(os.path.join(root, *rel))
+            if os.path.isdir(alt):
+                return alt
         return ''
 
     # 常见浏览器（gallery-dl --cookies-from-browser 支持）
@@ -102,8 +106,8 @@ class TwitterGalleryDLParser:
         """运行 gallery-dl --dump-json，返回标准输出文本；失败返回''。
 
         自动从浏览器加载 Twitter 登录 Cookie（auth_token），避免 X 反爬
-        （ConnectionResetError / 返回 ['error']）。与 OGC多功能版/twitter
-        的默认行为（--cookies-from-browser）保持一致。
+        （ConnectionResetError / 返回 ['error']），默认行为与
+        gallery-dl 的 --cookies-from-browser 一致。
         """
         project_dir = self._resolve_project_dir()
         if not project_dir:

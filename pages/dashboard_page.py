@@ -102,6 +102,56 @@ class StatCard(CardWidget):
 
 
 # ═══════════════════════════════════════════════════════════
+#  模块下载文件统计卡片（紧凑样式）
+# ═══════════════════════════════════════════════════════════
+class ModuleFileCard(CardWidget):
+    """紧凑的模块下载文件统计卡：图标 + 名称 + 文件数量"""
+
+    def __init__(self, name: str, value=0, color: str = "#28afe9",
+                 icon: FIF = FIF.FOLDER, parent=None):
+        super().__init__(parent=parent)
+        self.setFixedSize(180, 78)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(10)
+
+        # 图标背景
+        iconBg = QFrame(self)
+        iconBg.setFixedSize(42, 42)
+        iconBg.setStyleSheet(f"""
+            QFrame {{
+                background-color: {color}22;
+                border-radius: 12px;
+            }}
+        """)
+        iconLayout = QVBoxLayout(iconBg)
+        iconLayout.setContentsMargins(0, 0, 0, 0)
+        iconWidget = IconWidget(icon, iconBg)
+        iconWidget.setFixedSize(22, 22)
+        iconWidget.setStyleSheet(f"color: {color}; background: transparent;")
+        iconLayout.addWidget(iconWidget, 0, Qt.AlignCenter)
+        layout.addWidget(iconBg)
+
+        # 文字信息
+        textLayout = QVBoxLayout()
+        textLayout.setSpacing(2)
+        textLayout.setContentsMargins(0, 0, 0, 0)
+        self.valueLabel = StrongBodyLabel(str(value), self)
+        self.valueLabel.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {color};")
+        self.nameLabel = CaptionLabel(name, self)
+        self.nameLabel.setStyleSheet(
+            "font-size: 12px; color: " + theme_color('#8A8A8A', '#AAAAAA') + ";")
+        textLayout.addWidget(self.valueLabel)
+        textLayout.addWidget(self.nameLabel)
+        layout.addLayout(textLayout)
+        layout.addStretch()
+
+    def setValue(self, value):
+        self.valueLabel.setText(str(value))
+
+
+# ═══════════════════════════════════════════════════════════
 #  用户行卡片（列表中的一行）
 # ═══════════════════════════════════════════════════════════
 class UserRowCard(CardWidget):
@@ -545,6 +595,49 @@ class DashboardInterface(QScrollArea):
 
         self.mainLayout.addLayout(self.statsGrid)
 
+        # ══ 各模块下载文件数 ══
+        fileCard = CardWidget(self.view)
+        fileLayout = QVBoxLayout(fileCard)
+        fileLayout.setContentsMargins(24, 20, 24, 20)
+        fileLayout.setSpacing(12)
+
+        fileHeader = QHBoxLayout()
+        fileTitle = StrongBodyLabel("📁 各模块下载文件数", fileCard)
+        fileTitle.setStyleSheet("font-size: 18px; font-weight: bold;")
+        fileHeader.addWidget(fileTitle)
+        fileHeader.addStretch()
+        self.moduleTotalLabel = CaptionLabel("共 0 个文件", fileCard)
+        self.moduleTotalLabel.setStyleSheet(
+            "color: " + theme_color('#909399', '#8A8A8A') + "; font-size: 13px;")
+        fileHeader.addWidget(self.moduleTotalLabel)
+        fileLayout.addLayout(fileHeader)
+
+        # 注意：FlowLayout 不传父控件（否则会被 Qt 当作卡片自身布局，与 fileLayout 冲突）
+        self.moduleFlow = FlowLayout()
+        self.moduleFlow.setSpacing(10)
+        fileLayout.addLayout(self.moduleFlow)
+
+        # 模块文件数卡片（key, 显示名, 颜色, 图标）
+        self._module_file_cards = {}
+        module_specs = [
+            ('douyin', '抖音', '#28afe9', FIF.VIDEO),
+            ('bilibili', '哔哩哔哩', '#67C23A', FIF.VIDEO),
+            ('twitter', '推特', '#4FC3F7', FIF.VIDEO),
+            ('pixiv', 'Pixiv', '#FF9800', FIF.PHOTO),
+            ('xvideo', 'Xvideo', '#9C27B0', FIF.VIDEO),
+            ('youtube', 'YouTube', '#F56C6C', FIF.VIDEO),
+            ('jmcomic', 'JMComic', '#00BCD4', FIF.BOOK_SHELF),
+            ('easycopy', '拷贝漫画', '#FF5722', FIF.BOOK_SHELF),
+            ('ehentai', 'E-Hentai', '#4CAF50', FIF.PHOTO),
+            ('music', '音乐', '#E6A23C', FIF.MUSIC),
+        ]
+        for key, name, color, icon in module_specs:
+            card = ModuleFileCard(name, 0, color, icon)
+            self.moduleFlow.addWidget(card)
+            self._module_file_cards[key] = card
+
+        self.mainLayout.addWidget(fileCard)
+
         # ══ 使用量统计区 ══
         usageCard = CardWidget(self.view)
         usageLayout = QVBoxLayout(usageCard)
@@ -642,9 +735,10 @@ class DashboardInterface(QScrollArea):
             pass
 
     def showEvent(self, e):
-        """首次显示时宽度就绪，重新定位标题栏"""
+        """首次显示 / 每次切换到仪表盘时刷新数据并重新定位标题栏"""
         super().showEvent(e)
         self._layout_header()
+        self.refresh()
 
     def resizeEvent(self, e):
         """窗口尺寸变化时同步标题栏控件位置"""
@@ -702,6 +796,13 @@ class DashboardInterface(QScrollArea):
             self.statJmSubCard.setValue(stats.get('jmcomic_subscription_count', 0))
             self.statJmDownloadCard.setValue(stats.get('jmcomic_download_count', 0))
             self.statMusicFileCard.setValue(stats.get('music_file_count', 0))
+
+            # 各模块下载文件数
+            module_files = stats.get('module_files', {}) or {}
+            for key, card in self._module_file_cards.items():
+                card.setValue(module_files.get(key, 0))
+            self.moduleTotalLabel.setText(
+                f"共 {stats.get('total_download_files', 0)} 个文件")
         except Exception as e:
             InfoBar.error(
                 title="加载统计失败", content=str(e),
@@ -724,7 +825,9 @@ class DashboardInterface(QScrollArea):
 
             # 模块中文名映射
             module_names = {'music': '音乐', 'video': '视频', 'people': '人物',
-                            'home': '首页', 'jmcomic': 'JMComic', 'downloads': '总下载'}
+                            'home': '首页', 'jmcomic': 'JMComic',
+                            'ehentai': 'E-Hentai', 'easycopy': '拷贝漫画',
+                            'downloads': '总下载'}
             action_names = {'search': '搜索', 'play': '播放', 'download': '下载',
                             'parse': '解析', 'visit': '访问', 'pack': '打包',
                             'subscribe': '订阅', 'login': '登录', 'browse': '浏览'}
@@ -736,7 +839,7 @@ class DashboardInterface(QScrollArea):
 
             barSeries = QBarSeries()
             # 收集所有模块和动作
-            modules = ['music', 'video', 'home', 'people', 'jmcomic']
+            modules = ['music', 'video', 'home', 'people', 'jmcomic', 'ehentai', 'easycopy']
             # 动作分组：一个动作一组柱，每个模块一个 set
             for action in ('search', 'play', 'download', 'parse', 'visit', 'pack', 'subscribe'):
                 barSet = QBarSet(action_names.get(action, action))

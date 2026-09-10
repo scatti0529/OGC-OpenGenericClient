@@ -3,19 +3,65 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, FolderListSetti
                             OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
                             ComboBoxSettingCard, ExpandLayout, Theme, CustomColorSettingCard,
-                            setTheme, setThemeColor, RangeSettingCard, isDarkTheme)
+                            setTheme, setThemeColor, RangeSettingCard, isDarkTheme,
+                            SettingCard, ComboBox, SwitchButton, LineEdit, PushButton,
+                            PrimaryPushButton, Dialog, BodyLabel)
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import InfoBar, InfoBarPosition
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QStandardPaths
 from PyQt5.QtGui import QDesktopServices
-from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog
+from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog, QVBoxLayout, QHBoxLayout, QDialogButtonBox, QDialog
 from pathlib import Path
 from ui.widgets.common import cfg, HELP_URL, FEEDBACK_URL, AUTHOR, VERSION, YEAR, isWin11
 from ui.widgets.common import signalBus, log_manager, CFG
 from ui.widgets.common import StyleSheet
+import core.auto_login as auto_login
 from ui.widgets.glass_effect import glass_manager
 from ui.widgets.ui_utils import install_hover_tip
 from ui.widgets.common import cfg as _cfg
+
+
+class _AccountEditDialog(QDialog):
+    """添加 / 编辑自动登录账号的弹窗（账号名 + 密码）。"""
+
+    def __init__(self, title: str, parent=None, username: str = '', password: str = ''):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedWidth(360)
+
+        self.username_edit = LineEdit(self)
+        self.username_edit.setPlaceholderText('账号名')
+        self.username_edit.setText(username)
+
+        self.password_edit = LineEdit(self)
+        self.password_edit.setPlaceholderText('密码')
+        self.password_edit.setEchoMode(LineEdit.Password)
+        self.password_edit.setText(password)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.addWidget(BodyLabel('账号名', self))
+        layout.addWidget(self.username_edit)
+        layout.addWidget(BodyLabel('密码', self))
+        layout.addWidget(self.password_edit)
+        layout.addStretch(1)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _on_accept(self):
+        if not self.username_edit.text().strip():
+            self.username_edit.setPlaceholderText('账号名不能为空')
+            return
+        if not self.password_edit.text():
+            self.password_edit.setPlaceholderText('密码不能为空')
+            return
+        self.accept()
+
+    def get_credentials(self):
+        return self.username_edit.text().strip(), self.password_edit.text()
 
 
 class SettingInterface(ScrollArea):
@@ -215,6 +261,68 @@ class SettingInterface(ScrollArea):
             parent=self.updateSoftwareGroup
         )
 
+        # auto login（自动登录：本机多账号，跳过登录页直进主页）
+        self.autoLoginGroup = SettingCardGroup(
+            self.tr('自动登录'), self.scrollWidget)
+
+        # ========= 卡片1：开机自动登录（沿用SwitchSettingCard，稳定）=========
+        self.autoLoginCard = SwitchSettingCard(
+            FIF.ROBOT,
+            self.tr('开机自动登录'),
+            self.tr('开启后跳过登录页，直接用选中账号登录并显示过渡动画'),
+            configItem=None,
+            parent=self.autoLoginGroup
+        )
+        self.autoLoginSwitch = self.autoLoginCard.switchButton
+        self.autoLoginSwitch.setChecked(auto_login.is_enabled())
+        self.autoLoginSwitch.checkedChanged.connect(self._on_auto_login_switch)
+
+
+        # ========= 卡片2：自动登录账号，改用CardWidget，彻底解决高度塌陷 =========
+        from qfluentwidgets import CardWidget, IconWidget, CaptionLabel, BodyLabel
+        self.autoAccountCard = CardWidget(self.autoLoginGroup)
+        self.autoAccountCard.setMinimumHeight(80)
+        cardLayout = QHBoxLayout(self.autoAccountCard)
+        cardLayout.setContentsMargins(20,16,20,16)
+        cardLayout.setSpacing(16)
+
+        # 左侧图标+文字
+        icon = IconWidget(FIF.PEOPLE, self.autoAccountCard)
+        icon.setFixedSize(24,24)
+        textLayout = QVBoxLayout()
+        titleLabel = BodyLabel(self.tr("自动登录账号"))
+        descLabel = CaptionLabel(self.tr("选择本次登录要使用的账号"))
+        textLayout.addWidget(titleLabel)
+        textLayout.addWidget(descLabel)
+        cardLayout.addWidget(icon)
+        cardLayout.addLayout(textLayout)
+        cardLayout.addStretch(1)
+
+        # 右侧控件行
+        self.autoAccountRow = QWidget()
+        row = QHBoxLayout(self.autoAccountRow)
+        row.setContentsMargins(0,0,0,0)
+        row.setSpacing(12)
+        self.autoAccountCombo = ComboBox()
+        self.autoAccountCombo.setFixedWidth(220)
+        self.autoAccountCombo.setMinimumHeight(32)
+        self.addAccountBtn = PushButton(FIF.ADD, self.tr('添加账号'))
+        self.addAccountBtn.setMinimumHeight(32)
+        self.delAccountBtn = PushButton(FIF.DELETE, self.tr('删除账号'))
+        self.delAccountBtn.setMinimumHeight(32)
+        row.addWidget(self.autoAccountCombo)
+        row.addWidget(self.addAccountBtn)
+        row.addWidget(self.delAccountBtn)
+        self.addAccountBtn.clicked.connect(self._on_add_account)
+        self.delAccountBtn.clicked.connect(self._on_delete_account)
+        cardLayout.addWidget(self.autoAccountRow)
+
+        # 添加到分组
+        self.autoLoginGroup.addSettingCard(self.autoLoginCard)
+        self.autoLoginGroup.addSettingCard(self.autoAccountCard)
+
+
+
         # application
         self.aboutGroup = SettingCardGroup(self.tr('关于'), self.scrollWidget)
         self.helpCard = HyperlinkCard(
@@ -243,6 +351,7 @@ class SettingInterface(ScrollArea):
         )
 
         self.__initWidget()
+        self.refresh_auto_login()
 
     def __initWidget(self):
         self.resize(1000, 800)
@@ -256,6 +365,18 @@ class SettingInterface(ScrollArea):
         self.scrollWidget.setObjectName('scrollWidget')
         self.settingLabel.setObjectName('settingLabel')
         StyleSheet.SETTING_INTERFACE.apply(self)
+
+        # ========= 新增这段样式 =========
+        self.setStyleSheet("""
+            SettingCard {
+                min-height: 64px;
+            }
+            QComboBox, PushButton {
+                max-height:32px;
+            }
+        """)
+        # ===============================
+
 
         self.micaCard.setEnabled(isWin11())
 
@@ -306,8 +427,10 @@ class SettingInterface(ScrollArea):
         self.expandLayout.addWidget(self.personalGroup)
         self.expandLayout.addWidget(self.materialGroup)
         self.expandLayout.addWidget(self.logGroup)
+        self.expandLayout.addWidget(self.autoLoginGroup)
         self.expandLayout.addWidget(self.updateSoftwareGroup)
         self.expandLayout.addWidget(self.aboutGroup)
+
 
     def __showRestartTooltip(self):
         """ show restart tooltip """
@@ -439,6 +562,87 @@ class SettingInterface(ScrollArea):
         install_hover_tip(self.helpCard, "帮助", "打开帮助页面，学习 PyQt-Fluent-Widgets 的使用技巧")
         install_hover_tip(self.feedbackCard, "提供反馈", "打开反馈页面，帮助我们改进应用程序")
         install_hover_tip(self.aboutCard, "关于", "查看应用版本信息并检查更新")
+
+        # 自动登录
+        self.autoLoginSwitch.checkedChanged.connect(self._on_auto_login_switch)
+        self.autoAccountCombo.currentTextChanged.connect(self._on_account_selected)
+        install_hover_tip(self.autoLoginCard, "开机自动登录", "开启后下次启动跳过登录页，直接用选中账号登录并显示过渡动画")
+        install_hover_tip(self.autoAccountCard, "自动登录账号", "选择本次自动登录使用的账号")
+        install_hover_tip(self.addAccountBtn, "添加账号", "新增一个用于自动登录的账号（账号名+密码）")
+        install_hover_tip(self.delAccountBtn, "删除账号", "删除下拉框中当前选中的账号")
+        self.refresh_auto_login()
+
+    # ---------------- 自动登录 ----------------
+    def refresh_auto_login(self):
+        """刷新账号下拉框与开关状态（从存储读取）。"""
+        try:
+            self.autoLoginSwitch.blockSignals(True)
+            self.autoLoginSwitch.setChecked(auto_login.is_enabled())
+            self.autoLoginSwitch.blockSignals(False)
+
+            self.autoAccountCombo.blockSignals(True)
+            self.autoAccountCombo.clear()
+            for acc in auto_login.get_accounts():
+                self.autoAccountCombo.addItem(acc.get('username', ''))
+            sel = auto_login.get_selected()
+            if sel:
+                idx = self.autoAccountCombo.findText(sel)
+                if idx >= 0:
+                    self.autoAccountCombo.setCurrentIndex(idx)
+            self.autoAccountCombo.blockSignals(False)
+
+            has_acc = self.autoAccountCombo.count() > 0
+            self.autoAccountCard.setEnabled(has_acc or auto_login.is_enabled())
+            self.delAccountBtn.setEnabled(has_acc and self.autoAccountCombo.currentIndex() >= 0)
+        except Exception:
+            pass
+
+    def _on_auto_login_switch(self, checked: bool):
+        auto_login.set_enabled(checked)
+        if checked and self.autoAccountCombo.count() > 0:
+            auto_login.set_selected(self.autoAccountCombo.currentText())
+        self.refresh_auto_login()
+
+    def _on_account_selected(self, text: str):
+        if text:
+            auto_login.set_selected(text)
+
+    def _on_add_account(self):
+        """弹出对话框新增/更新一个账号。"""
+        existing = self.autoAccountCombo.currentText() if self.autoAccountCombo.count() else ''
+        dlg = _AccountEditDialog(self.tr('添加自动登录账号'), self,
+                                 username=existing, password='')
+        if dlg.exec_() == QDialog.Accepted:
+            username, password = dlg.get_credentials()
+            auto_login.upsert_account(username, password)
+            # 新增后默认选中该账号
+            auto_login.set_selected(username)
+            self.refresh_auto_login()
+            InfoBar.success(
+                title=self.tr('已保存'),
+                content=self.tr(f'账号 {username} 已添加/更新'),
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=3000, parent=self
+            )
+
+    def _on_delete_account(self):
+        """删除当前选中的账号。"""
+        username = self.autoAccountCombo.currentText()
+        if not username:
+            InfoBar.warning(
+                title=self.tr('提示'), content=self.tr('请先选择要删除的账号'),
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP, duration=3000, parent=self
+            )
+            return
+        auto_login.remove_account(username)
+        self.refresh_auto_login()
+        InfoBar.success(
+            title=self.tr('已删除'),
+            content=self.tr(f'账号 {username} 已删除'),
+            orient=Qt.Horizontal, isClosable=True,
+            position=InfoBarPosition.TOP, duration=3000, parent=self
+        )
 
     def __onOperationLogCardClicked(self):
         """操作日志路径选择"""

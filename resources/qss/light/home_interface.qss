@@ -1,3 +1,8 @@
+/* OGC 首页 · 浅色主题
+   页面容器统一透明，磨砂背景由窗口级 FrostedPanel 透出。
+   Hero / 快捷入口卡片 / 公告分段的具体样式在 pages/home_page.py 内联管理，
+   保证主题切换时能实时刷新颜色。 */
+
 SettingInterface,
 #view {
     background-color: transparent;
@@ -8,12 +13,14 @@ QScrollArea {
     background-color: transparent;
 }
 
-
-BannerWidget > #galleryLabel {
-    font: 42px 'Segoe UI SemiBold', 'Microsoft YaHei SemiBold';
-    background-color: transparent;
-    color: black;
-    padding-left: 28px;
+/* 快捷入口卡片：半透明玻璃底 + 细边框，文字保持主题前景色 */
+FeatureCard {
+    background-color: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 14px;
 }
 
-
+FeatureCard:hover {
+    background-color: rgba(248, 252, 254, 0.95);
+    border: 1px solid rgba(14, 140, 192, 0.30);
+}

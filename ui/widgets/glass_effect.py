@@ -137,16 +137,20 @@ class GlassManager(QObject):
 
     # ---------- 颜色 ----------
     def content_bg_color(self) -> QColor:
-        """内容层背景色（跟随主题）"""
+        """内容层背景色（跟随主题）
+
+        深色主题使用冷蓝灰调（而非死黑），与「深蓝玻璃」方向保持一致；
+        浅色主题保持玻璃白，带一丝冷调。
+        """
         if isDarkTheme():
-            return QColor(28, 28, 30, self._opacity)
-        return QColor(255, 255, 255, self._opacity)
+            return QColor(34, 40, 50, self._opacity)
+        return QColor(250, 252, 254, self._opacity)
 
     def border_color(self) -> QColor:
-        """加深后的边框色（保证列表/卡片边界清晰）"""
+        """边框色（冷色系，保证列表/卡片边界清晰）"""
         if isDarkTheme():
-            return QColor(255, 255, 255, 85)
-        return QColor(0, 0, 0, 55)
+            return QColor(180, 210, 235, 60)
+        return QColor(40, 90, 130, 50)
 
     # ---------- QSS 构建 ----------
     def table_qss(self) -> str:
@@ -406,10 +410,11 @@ class FrostedPanel(QWidget):
         painter.drawPixmap(0, 0, self._blur_cache)
 
         # 3) 叠加主题色半透明遮罩（实现透明度可调）
+        # 深色用冷蓝黑调，浅色用玻璃白，与「深蓝玻璃」方向一致
         if isDarkTheme():
-            painter.fillRect(self.rect(), QColor(20, 20, 22, self._alpha))
+            painter.fillRect(self.rect(), QColor(22, 27, 35, self._alpha))
         else:
-            painter.fillRect(self.rect(), QColor(255, 255, 255, self._alpha))
+            painter.fillRect(self.rect(), QColor(250, 252, 254, self._alpha))
 
     def _apply_blur(self, pixmap):
         """对 pixmap 应用高斯模糊并返回结果（blur=0 时返回原图）"""
