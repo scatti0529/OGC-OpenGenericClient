@@ -131,7 +131,9 @@ class Downloader:
 class DownloadThread(QThread):
     """带进度信号的多线程下载"""
 
-    finished = pyqtSignal()          # 下载结束
+    # 注意：**不要**命名为 finished —— 那会覆盖 QThread 内建的 finished 信号，
+    # 导致 Qt 自身的线程结束语义（以及 core.thread_guard 的线程登记回收）失效。
+    downloadFinished = pyqtSignal()  # 下载结束（成功或失败都会发出）
     progress = pyqtSignal(int, int)  # 实时进度 (current, total)
 
     def __init__(self, url, title, path, file_type):
@@ -142,17 +144,34 @@ class DownloadThread(QThread):
         self.file_type = file_type
 
     def run(self):
-        downloader = Downloader(Path(self.path))
+        """执行下载：无论成功失败都必须发出结束信号。
 
-        def progress_callback(current, total):
-            self.progress.emit(current, total)
+        原实现没有 try/except：asyncio.run 里的网络（httpx）或磁盘异常会直接
+        终止线程，结束信号永不发出，而调用方（ui/widgets/common.py 的热门卡片）
+        完全依赖该信号恢复按钮 —— 结果是下载按钮永久隐藏、进度条永久卡住、
+        用户既看不到失败也无法重试。异常逃逸出 run() 时 PyQt5 还会走
+        qFatal()→abort() 直接闪退。
+        """
+        try:
+            downloader = Downloader(Path(self.path))
 
-        asyncio.run(
-            downloader.download(
-                url=self.url,
-                filename=f"{self.text}{self.file_type}",
-                folder_path=Path(self.path),
-                progress_callback=progress_callback
+            def progress_callback(current, total):
+                self.progress.emit(current, total)
+
+            asyncio.run(
+                downloader.download(
+                    url=self.url,
+                    filename=f"{self.text}{self.file_type}",
+                    folder_path=Path(self.path),
+                    progress_callback=progress_callback
+                )
             )
-        )
-        self.finished.emit()
+        except Exception:
+            try:
+                from core.logger import logger
+                logger.error(f"后台下载线程异常: {self.url}", exc_info=True)
+            except Exception:
+                pass
+        finally:
+            # 关键：失败路径也要通知 UI 恢复可交互状态
+            self.downloadFinished.emit()

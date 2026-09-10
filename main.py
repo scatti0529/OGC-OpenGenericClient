@@ -32,6 +32,17 @@ logger.initialize(
     err_log_path=CFG['error_log_path']
 )
 
+# ── 安装全局崩溃兜底（必须尽早，且在任何 Qt 槽函数可能执行之前）──
+# 作用：1) PyQt5 槽函数里未捕获的异常默认会走 qFatal()→abort() 直接闪退且无日志，
+#       安装 sys.excepthook 后改为"记录日志 + 进程继续"，把闪退降级为可追踪错误；
+#       2) threading.Thread 内未捕获异常写入错误日志（否则线程静默死亡→界面卡死）；
+#       3) faulthandler 把硬崩溃瞬间的全部线程栈写入 logs/crash.log。
+try:
+    from core import crash_guard
+    crash_guard.install(log_dir=os.path.dirname(CFG['error_log_path']) or None)
+except Exception as _e:
+    logger.error(f"安装全局异常兜底失败: {_e}")
+
 # ── 初始化数据库 ──
 try:
     from core.database import init_db
@@ -87,6 +98,14 @@ try:
     app.aboutToQuit.connect(_thread_guard_shutdown)
 except Exception as _e:
     pass
+
+# ── GUI 主线程看门狗：心跳超时即转储全部线程栈，把"界面卡死"变成有现场可查 ──
+# 必须在 QApplication 之后、事件循环之前安装（心跳依赖主线程事件循环）。
+try:
+    from core import watchdog as _watchdog
+    _watchdog.install()
+except Exception as _e:
+    logger.error(f"启动主线程看门狗失败: {_e}")
 
 
 # ── 修复 qfluentwidgets InfoBar 动画警告 ──────────────────────────────

@@ -23,11 +23,25 @@ _CUSTOM_DB_PATH = None
 
 
 def set_db_path(path):
-    """设置共享数据库路径（传 None 还原为包内默认）。"""
+    """设置共享数据库路径（传 None 还原为包内默认）。
+
+    必须在**锁内**切换并显式关闭旧连接：原实现在锁外把 ``_conn = None``
+    且不 close 旧连接 —— 运行中切库时，已持有旧 connection 的查询会继续
+    读写旧库文件，而新查询走新库，造成"状态分叉"（下载记录写进 A 库、
+    界面从 B 库读，双方都看不到对方），旧连接句柄也只能等 GC 才释放。
+    """
     global _CUSTOM_DB_PATH, _conn, _COLS
-    _CUSTOM_DB_PATH = path
-    _conn = None
-    _COLS = {}
+    with _lock:
+        old = _conn
+        _conn = None
+        _COLS = {}
+        _CUSTOM_DB_PATH = path
+    # 关闭放在锁外，避免持锁做可能阻塞的 IO
+    if old is not None:
+        try:
+            old.close()
+        except Exception:
+            pass
 
 
 def get_db_path():
@@ -100,16 +114,34 @@ FILTER_TAG_NAMESPACE = 3
 
 
 def _get_conn():
+    """获取共享连接（线程安全的惰性初始化 + 并发加固）。
+
+    原实现没有加锁：两个线程同时首次访问会各自建立一个连接，多出来的那个
+    成为**无人关闭的泄漏连接**，`_COLS` 也会被重复写入。
+
+    另外该库（app_db.db）还会被 ehentai_sync 等模块用独立短连接并发读写，
+    默认 journal 模式下读写互斥，很容易 "database is locked"，而调用方
+    普遍 ``except Exception: return False`` 把它吞掉 —— 表现为下载记录/收藏
+    静默丢失。这里统一开启 WAL + 忙等超时。
+    """
     global _conn
-    if _conn is None:
-        path = get_db_path()
-        d = os.path.dirname(path)
-        if d:
-            os.makedirs(d, exist_ok=True)
-        _conn = sqlite3.connect(path, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _init_tables(_conn)
-    return _conn
+    with _lock:
+        if _conn is None:
+            path = get_db_path()
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA synchronous=NORMAL")
+            except sqlite3.Error:
+                pass
+            _init_tables(conn)
+            _conn = conn
+        return _conn
 
 
 def _init_tables(conn):

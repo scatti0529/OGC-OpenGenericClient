@@ -110,6 +110,10 @@ class MediaOfflineViewer(QWidget):
 
     back_requested = pyqtSignal()
     bar = pyqtSignal(str, str)      # (level, message) 跨线程提示
+    # 解析结果与忙碌状态一律通过信号回到 GUI 线程处理：
+    # Qt 规定只有 GUI 线程能创建/操作控件，后台线程直接建控件是未定义行为
+    parsed = pyqtSignal(list)       # 解析出的在线条目
+    busy = pyqtSignal(bool)         # 是否处于"解析中"状态
 
     def __init__(self, platform: str, display_name: str, parent=None):
         super().__init__(parent)
@@ -123,6 +127,8 @@ class MediaOfflineViewer(QWidget):
         self._image_threads: List[RemoteImageThread] = []  # 存活引用，避免运行中被 GC
         self._player: Optional[QMediaPlayer] = None
         self.bar.connect(self._on_bar)
+        self.parsed.connect(self._on_parsed)
+        self.busy.connect(self._on_busy)
         self._build_ui()
         # 延迟加载：首次显示时才扫描本地下载目录（避开启动阶段的目录遍历）
         self._lazy_scanned = False
@@ -339,6 +345,14 @@ class MediaOfflineViewer(QWidget):
         threading.Thread(target=self._parse_online_worker, args=(url,), daemon=True).start()
 
     def _parse_online_worker(self, url: str):
+        """后台解析线程。
+
+        注意：本方法运行在 ``threading.Thread`` 中，**只能发信号**，
+        绝不可直接调用 QWidget 方法或创建控件 —— 原实现直接调用
+        ``self._rebuild_list()``（内部创建大量卡片控件、改布局）以及
+        ``self.parse_btn.setEnabled()``，属于 Qt 明确禁止的跨线程 GUI 操作，
+        后果是随机崩溃且拿不到 Python 堆栈。
+        """
         try:
             parser = get_parser(self.platform)
             if parser is None:
@@ -361,15 +375,27 @@ class MediaOfflineViewer(QWidget):
                     'is_local': False,
                     'mtime': 0,
                 })
-            self._online_entries = entries
-            self._rebuild_list()
+            # 交给 GUI 线程落地（_on_parsed 里再重建列表）
+            self.parsed.emit(entries)
             msg = f"解析到 {len(entries)} 个媒体" if entries else "未解析到媒体"
             self.bar.emit('success' if entries else 'warning', msg)
         except Exception as e:
             self.bar.emit('error', f"解析失败：{e}")
         finally:
-            self.parse_btn.setEnabled(True)
-            self.parse_btn.setText("在线阅读")
+            self.busy.emit(False)
+
+    def _on_parsed(self, entries):
+        """在 GUI 线程接收解析结果并重建列表。"""
+        self._online_entries = list(entries or [])
+        self._rebuild_list()
+
+    def _on_busy(self, busy: bool):
+        """在 GUI 线程切换"解析中"按钮状态。"""
+        try:
+            self.parse_btn.setEnabled(not busy)
+            self.parse_btn.setText("解析中…" if busy else "在线阅读")
+        except Exception:
+            pass
 
     def _on_bar(self, level: str, msg: str):
         """跨线程提示（bar 信号在主线程槽中执行）。"""

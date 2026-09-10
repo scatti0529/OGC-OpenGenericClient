@@ -589,10 +589,18 @@ class Window(SplitFluentWindow):
             self._glass_bg_panel.setGeometry(0, 0, self.width(), self.height())
 
     # ---------------- 线程健壮性 ----------------
-    def _reap_threads(self):
-        """回收所有仍在运行的后台 QThread（窗口关闭 / 应用退出前各调用一次）。"""
+    def _reap_threads(self, total_budget_ms: int = 3000):
+        """回收所有仍在运行的后台 QThread（窗口关闭 / 应用退出前各调用一次）。
+
+        加了**总预算**：原实现对每个线程串行 ``wait(1200)`` 且跑两轮，
+        10 个还在跑的线程（封面/解析/下载）会让 UI 冻结约 24 秒，
+        Windows 会把它判定成"程序无响应"。现在所有等待共享 3 秒总预算，
+        超时即放弃等待，剩余线程交由 core.thread_guard 在 aboutToQuit 统一收尾。
+        """
         try:
+            import time
             from PyQt5.QtCore import QThread
+            deadline = time.monotonic() + max(total_budget_ms, 0) / 1000.0
             for _round in range(2):  # 两轮：第一轮打断，第二轮再等待一次
                 seen = set()
                 for t in self.findChildren(QThread):
@@ -606,8 +614,11 @@ class Window(SplitFluentWindow):
                             t.requestInterruption()
                         except Exception:
                             pass
+                        left = deadline - time.monotonic()
+                        if left <= 0:
+                            return
                         try:
-                            t.wait(1200)
+                            t.wait(max(50, min(1200, int(left * 1000))))
                         except Exception:
                             pass
                     except Exception:

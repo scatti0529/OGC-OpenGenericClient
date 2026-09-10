@@ -76,6 +76,9 @@ class PixivDownloader:
         self._create_folder_lock = threading.Lock()
         self._progress_lock = threading.Lock()
         self._speed_lock = threading.Lock()
+        # _error_count 会被多个下载 worker 并发读-改-写，必须单独加锁，
+        # 否则丢失更新会让实际重试次数超过 _MAX_ERROR_COUNT。
+        self._error_lock = threading.Lock()
 
         self._api = None
         self._code_verifier = None
@@ -298,36 +301,85 @@ class PixivDownloader:
             raise ConnectionError('Connection error: %s' % r.status_code)
 
     def _download_worker(self, download_queue):
-        while not download_queue.empty():
-            illustration = download_queue.get()
-            filepath = illustration['path']
-            filename = illustration['file']
-            url = illustration['url']
+        """下载工作线程：队列取空即自然退出。
+
+        原实现是 ``while not download_queue.empty():`` 配无超时的 ``get()``，
+        两者之间存在 TOCTOU：多个 worker 可能同时看到"非空"，但只有一个能取到
+        元素，其余的会**永久阻塞**在 ``get()`` 上 —— 线程泄漏，且随着运行时间
+        推移 worker 逐个卡死，队列再也没人消费。改为带超时的 get，取空即退出。
+        """
+        while True:
+            try:
+                illustration = download_queue.get(timeout=1.0)
+            except queue.Empty:
+                return
+            try:
+                self._download_one(illustration, download_queue)
+            except Exception as e:      # noqa: BLE001
+                # 兜底：任何未预期异常都不能让 task_done() 被跳过，
+                # 否则 download_queue.join() 会永久等待。
+                try:
+                    self._log('下载任务异常: %s' % e)
+                except Exception:
+                    pass
+            finally:
+                download_queue.task_done()
+
+    def _download_one(self, illustration, download_queue):
+        """处理单个下载任务，并保证 ``_finished_download`` 恰好自增一次。"""
+        filepath = illustration['path']
+        filename = illustration['file']
+        url = illustration['url']
+        with self._error_lock:
             count = self._error_count.get(url, 0)
-            if count < _MAX_ERROR_COUNT:
-                if not os.path.exists(filepath):
-                    with self._create_folder_lock:
-                        if not os.path.exists(os.path.dirname(filepath)):
-                            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                    try:
-                        self._download_file(url, filepath)
-                        with self._progress_lock:
-                            self._finished_download += 1
-                    except Exception as e:
-                        if count < _MAX_ERROR_COUNT:
-                            self._log('%s => %s download error, retry' % (e, filename))
-                            download_queue.put(illustration)
-                            self._error_count[url] = count + 1
+
+        if count >= _MAX_ERROR_COUNT:
+            self._log('%s reach max retries, canceled' % url)
+            with self._progress_lock:
+                self._finished_download += 1
+            return
+
+        if os.path.exists(filepath):
+            # 目标文件已存在（重复文件名 / 别的线程刚补齐）：同样必须计为"已完成"。
+            # 原实现此分支什么都不做 → _finished_download 永远追不上总数，
+            # _track_progress 的 while 循环不退出 → progress_t.join() 永久卡死；
+            # 而调用链跑在 Qt 按钮槽（GUI 线程）上 → 整个界面假死只能杀进程。
+            with self._progress_lock:
+                self._finished_download += 1
+            return
+
+        with self._create_folder_lock:
+            parent = os.path.dirname(filepath)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+        try:
+            self._download_file(url, filepath)
+            with self._progress_lock:
+                self._finished_download += 1
+        except Exception as e:          # noqa: BLE001
+            with self._error_lock:
+                n = self._error_count.get(url, 0) + 1
+                self._error_count[url] = n
+            if n < _MAX_ERROR_COUNT:
+                self._log('%s => %s download error, retry' % (e, filename))
+                download_queue.put(illustration)
             else:
                 self._log('%s reach max retries, canceled' % url)
                 with self._progress_lock:
                     self._finished_download += 1
-            download_queue.task_done()
 
-    def _track_progress(self, max_size):
-        """进度跟踪线程：通过回调上报 (current, total, speed)"""
+    def _track_progress(self, max_size, stop_event=None):
+        """进度跟踪线程：通过回调上报 (current, total, speed)。
+
+        增加 ``stop_event`` 退出条件：只要 ``_start_and_wait`` 已确认队列排空，
+        进度线程就必须能退出，不再依赖"计数一定追平总数"这一假设 ——
+        一旦计数出现任何偏差，原来的写法就是永久卡死。
+        同时把 ``!=`` 改成 ``<``，避免计数越过总数时同样陷入死循环。
+        """
         last_time = time.time()
-        while self._finished_download != max_size:
+        while self._finished_download < max_size:
+            if stop_event is not None and stop_event.is_set():
+                break
             current = self._finished_download
             elapsed = time.time() - last_time
             speed = self._get_speed(elapsed)
@@ -337,16 +389,21 @@ class PixivDownloader:
         self._emit_progress(self._finished_download, max_size, self._get_speed(1))
 
     def _start_and_wait(self, download_queue, count):
-        """启动下载线程并等待全部完成"""
-        progress_t = threading.Thread(target=self._track_progress, args=(count,))
+        """启动下载线程并等待全部完成（保证进度线程一定退出）。"""
+        stop_track = threading.Event()
+        progress_t = threading.Thread(
+            target=self._track_progress, args=(count, stop_track))
         progress_t.daemon = True
         progress_t.start()
         for _ in range(_THREADING_NUMBER):
             download_t = threading.Thread(target=self._download_worker, args=(download_queue,))
             download_t.daemon = True
             download_t.start()
-        progress_t.join()
+        # 队列排空即代表所有任务都已配对 task_done()（worker 用 finally 保证），
+        # 此时强制让进度线程收尾，避免"计数偏差 → 永久卡在 join"的老问题。
         download_queue.join()
+        stop_track.set()
+        progress_t.join(timeout=5.0)
 
     def _get_filepath(self, url, illustration, save_path='.', add_user_folder=False,
                       add_rank=False):

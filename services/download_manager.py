@@ -39,6 +39,52 @@ MIN_CHUNK_SIZE = 512 * 1024  # 512 KB
 STREAM_CHUNK_SIZE = 256 * 1024  # 256 KB
 # 并发块读取大小
 PARALLEL_CHUNK_READ = 128 * 1024  # 128 KB
+# 停滞判定阈值：进度在这些秒内没有任何推进即视为卡死（而不是限制总耗时——
+# 大文件在慢速链路上合法地要跑很久，写死总时长会误杀正常下载）
+STALL_TIMEOUT_SEC = 90.0
+# 判定停滞、置位 stop_event 之后，留给线程收尾的有界时间
+STALL_GRACE_SEC = 30.0
+
+
+def join_threads_with_stall_detection(threads, progress_getter, stop_event,
+                                      stall_timeout=STALL_TIMEOUT_SEC,
+                                      grace_timeout=STALL_GRACE_SEC):
+    """等待一组下载线程结束，以"进度是否推进"判定卡死。
+
+    原实现在两处直接调用无超时的 ``t.join()``：只要有一个线程卡在 socket 读、
+    重试 sleep 或被饿死，整个下载链路就**永久挂住**（外层是 QThread，
+    界面表现为"下载永远停在 99%"且无法取消）。
+
+    这里不能简单改成 ``join(总时长)``：大文件正常下载可能远超任何固定上限。
+    正确做法是看**进度**——只要 progress_getter() 在 stall_timeout 内仍在增长
+    就继续等；一旦彻底停滞（连接假死、对端不回数据），就置位 stop_event
+    让线程尽快退出，再给 grace_timeout 有界收尾，把"永久卡死"变成
+    "有界失败 → 上层自动换下载模式重试"。
+
+    Returns:
+        True  所有线程已正常结束
+        False 因停滞而强制中止（此时 stop_event 已被置位）
+    """
+    deadline = time.monotonic() + stall_timeout
+    last = progress_getter()
+    while True:
+        alive = [t for t in threads if t.is_alive()]
+        if not alive:
+            return not stop_event.is_set()
+        now = time.monotonic()
+        cur = progress_getter()
+        if cur != last:
+            last = cur
+            deadline = now + stall_timeout      # 有推进就续期
+        if now >= deadline:
+            stop_event.set()
+            for t in alive:
+                try:
+                    t.join(grace_timeout)
+                except Exception:
+                    pass
+            return False
+        time.sleep(0.25)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -320,6 +366,22 @@ class ParallelDownloader:
             start = end + 1
         return chunks
 
+    def _add_progress(self, n: int):
+        """累加已下载字节并回调进度。
+
+        锁**只**保护共享计数这一个短临界区：progress_callback 由调用方
+        通过 Qt 信号转发（``signal.emit`` 本身线程安全），因此不需要把它
+        包在锁里串行执行。
+        """
+        with self.lock:
+            self.downloaded += n
+            current = self.downloaded
+        if self.progress_callback:
+            try:
+                self.progress_callback(current, self.total_size)
+            except Exception:
+                pass
+
     def _download_range(self, start: int, end: int, attempts: int = 0) -> bool:
         """下载单个分块（带重试）"""
         if self.stop_event.is_set():
@@ -333,7 +395,12 @@ class ParallelDownloader:
                 raise RuntimeError(f"HTTP {response.status_code}")
 
             offset = start
-            with self.lock:
+            # 锁只保护共享计数，绝不覆盖网络/文件 IO：
+            # 各分块线程用**各自的文件句柄**写入互不重叠的区间，本不需要互斥；
+            # 原实现把整段 iter_content 流式循环包在 with self.lock 里，导致
+            # ① "并发分块"被彻底串行化，多线程毫无收益；
+            # ② 任一分块连接停滞时持锁不动，其余分块全部饿死，最长卡到 30s 超时。
+            try:
                 with open(self.file_path, 'r+b') as f:
                     f.seek(start)
                     for chunk in response.iter_content(chunk_size=PARALLEL_CHUNK_READ):
@@ -341,14 +408,11 @@ class ParallelDownloader:
                             break
                         f.write(chunk)
                         offset += len(chunk)
-                        self.downloaded += len(chunk)
-                        if self.progress_callback:
-                            try:
-                                self.progress_callback(self.downloaded, self.total_size)
-                            except Exception:
-                                pass
-            response.close()
-            return True
+                        self._add_progress(len(chunk))
+                return True
+            finally:
+                # 异常路径同样关闭连接，避免句柄泄漏
+                response.close()
         except Exception:
             if attempts < self.retry_times and not self.stop_event.is_set():
                 time.sleep(0.5 * (attempts + 1))
@@ -371,20 +435,14 @@ class ParallelDownloader:
                 response.close()
                 raise RuntimeError(f"HTTP {response.status_code}")
 
-            with self.lock:
-                with open(self.file_path, 'r+b') as f:
-                    f.seek(current_offset)
-                    for chunk in response.iter_content(chunk_size=PARALLEL_CHUNK_READ):
-                        if self.stop_event.is_set() or not chunk:
-                            break
-                        f.write(chunk)
-                        current_offset += len(chunk)
-                        self.downloaded += len(chunk)
-                        if self.progress_callback:
-                            try:
-                                self.progress_callback(self.downloaded, self.total_size)
-                            except Exception:
-                                pass
+            with open(self.file_path, 'r+b') as f:
+                f.seek(current_offset)
+                for chunk in response.iter_content(chunk_size=PARALLEL_CHUNK_READ):
+                    if self.stop_event.is_set() or not chunk:
+                        break
+                    f.write(chunk)
+                    current_offset += len(chunk)
+                    self._add_progress(len(chunk))
             response.close()
             return True
         except Exception:
@@ -416,8 +474,11 @@ class ParallelDownloader:
             t.start()
             threads.append(t)
 
-        for t in threads:
-            t.join()
+        # 带停滞检测的等待：任一分块卡死时会有界退出并置位 stop_event，
+        # 不再像原来的无超时 join 那样永久挂住整条下载链路
+        if not join_threads_with_stall_detection(
+                threads, lambda: self.downloaded, self.stop_event):
+            return False
 
         # 检查失败分块，尝试断点续传
         retry_rounds = 0
@@ -682,8 +743,10 @@ class HlsDownloader:
                         for done in threads:
                             done.join(timeout=0.1)
                         threads = [t for t in threads if t.is_alive()]
-                for t in threads:
-                    t.join()
+                # 分片进度 = 已完成的 ts 文件数；停滞即中止（原为无超时 join）
+                if not join_threads_with_stall_detection(
+                        threads, lambda: len(self._seg_results), self.stop_event):
+                    return False
 
                 # 3. 检查完整性并合并
                 if len(self._seg_results) < total:

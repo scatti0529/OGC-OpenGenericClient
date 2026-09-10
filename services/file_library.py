@@ -25,7 +25,8 @@ VIDEO_COVER_SEM = threading.Semaphore(2)
 # ── 缩略图索引（JSON：源文件绝对路径 -> 缩略图缓存路径） ──
 _thumb_index = {}
 _thumb_index_loaded = False
-_thumb_index_lock = threading.Lock()
+# 用 RLock：_register_thumb 需要在持锁状态下复用会再次取锁的 load_thumb_index()
+_thumb_index_lock = threading.RLock()
 
 
 def _thumb_index_file() -> str:
@@ -70,13 +71,25 @@ def get_cached_thumb(source_path: str) -> str:
 
 
 def _register_thumb(source_path: str, thumb_path: str):
-    """将源文件与缩略图路径写入索引（异常安全，不干扰主流程）"""
+    """将源文件与缩略图路径写入索引（异常安全，不干扰主流程）。
+
+    关键：改共享 dict 与写盘必须**在同一把锁内**完成。
+    ``load_thumb_index()`` 返回的是模块级共享 dict 本身，而
+    ``save_thumb_index()`` 会在锁内 ``json.dump`` 迭代它；
+    原实现在锁外 ``load_thumb_index()[key] = ...``，当多个扫描/下载线程
+    （folder_library_page 的扫描线程、comic_offline、jmcomic_service、
+    easycopy/downloader）并发写入时，迭代中字典被改会抛
+    "dictionary changed size during iteration"，被 except 吞掉后
+    整个索引写盘失败 —— 结果是缩略图反复重算、条目永久丢失。
+    """
     try:
         if not source_path or not thumb_path or not os.path.isfile(thumb_path):
             return
         key = os.path.abspath(source_path)
-        load_thumb_index()[key] = os.path.abspath(thumb_path)
-        save_thumb_index()
+        value = os.path.abspath(thumb_path)
+        with _thumb_index_lock:      # RLock：save_thumb_index 会再次取同一把锁
+            load_thumb_index()[key] = value
+            save_thumb_index()
     except Exception:
         pass
 

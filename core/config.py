@@ -12,7 +12,10 @@
     CFG['xc'] = 10                   # 修改并自动保存
 """
 import json
+import os
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 
@@ -30,6 +33,9 @@ class ConfigManager:
         if getattr(self, '_initialized', False):
             return
         self._initialized = True
+        # 配置会被多个线程写（UI 设置页、下载线程保存账号、网络线程刷新 cookie），
+        # 用可重入锁串行化"改值 + 落盘"，避免并发写坏文件。
+        self._lock = threading.RLock()
 
         self.root = Path(sys.argv[0]).parent
         self.data = self.root / 'data'
@@ -92,18 +98,46 @@ class ConfigManager:
 
     # ---------- 字典式访问 ----------
     def save(self):
-        """保存配置到文件"""
-        self.cfg_file.write_text(
-            json.dumps(self.cfg, ensure_ascii=False, indent=2),
-            encoding='utf-8'
-        )
+        """保存配置到文件：加锁串行化 + 临时文件原子替换。
+
+        原实现直接 ``write_text`` 覆盖同一个 config.json。而本项目有多个线程会写它
+        （设置页保存、jmcomic 保存账号、douyin 保存 cookie、pixiv 保存抓取选项），
+        并发覆盖会产生"截断/交错"的半截 JSON，下次启动即 ``JSONDecodeError``，
+        被吞掉后回退成默认配置 —— 用户看到的现象是"设置莫名其妙全丢了"。
+        改为先写同目录临时文件再 ``os.replace`` 原子替换：任何时刻磁盘上的
+        config.json 要么是旧内容、要么是完整新内容，不会出现半截。
+        """
+        with self._lock:
+            # 持锁快照，避免 json.dumps 期间别的线程改字典导致
+            # "dictionary changed size during iteration"
+            data = json.dumps(dict(self.cfg), ensure_ascii=False, indent=2)
+            self.cfg_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(
+                    dir=str(self.cfg_file.parent),
+                    prefix=self.cfg_file.name + '.', suffix='.tmp')
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, self.cfg_file)
+                tmp_path = None
+            finally:
+                # 替换成功则临时文件已不存在；失败时清理残留，避免堆积 .tmp
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
 
     def __getitem__(self, key):
         return self.cfg[key]
 
     def __setitem__(self, key, value):
-        self.cfg[key] = value
-        self.save()
+        with self._lock:
+            self.cfg[key] = value
+            self.save()
 
     def __contains__(self, key):
         return key in self.cfg

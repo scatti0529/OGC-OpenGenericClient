@@ -153,32 +153,61 @@ class FetchTask(QRunnable):
 
 
 class PixmapCache(object):
-    """内存 pixmap 缓存（简单 LRU，按数量上限）"""
+    """内存 pixmap 缓存（简单 LRU，按数量上限）
+
+    加锁原因：本缓存被 GUI 线程（``ImageLoader.load`` 查缓存）与线程池 worker
+    （``FetchTask.run`` → ``_on_fetched`` 写缓存）**并发**读写。
+    原实现无锁，``self._order.remove(key)`` 在并发错位时抛 ValueError，
+    且会从 ``QRunnable.run()`` 直接逃逸（PyQt 下走 qFatal/abort 闪退）。
+    """
 
     def __init__(self, max_count=800):
         self.max_count = max_count
         self._map = {}
         self._order = []
+        self._lock = threading.Lock()
 
     def get(self, key):
-        if key in self._map:
-            self._order.remove(key)
-            self._order.append(key)
-            return self._map[key]
-        return None
+        with self._lock:
+            if key in self._map:
+                try:
+                    self._order.remove(key)
+                except ValueError:
+                    pass
+                self._order.append(key)
+                return self._map[key]
+            return None
 
     def put(self, key, pixmap):
-        if key in self._map:
-            self._order.remove(key)
-        self._map[key] = pixmap
-        self._order.append(key)
-        while len(self._order) > self.max_count:
-            old = self._order.pop(0)
-            self._map.pop(old, None)
+        with self._lock:
+            if key in self._map:
+                try:
+                    self._order.remove(key)
+                except ValueError:
+                    pass
+            self._map[key] = pixmap
+            self._order.append(key)
+            while len(self._order) > self.max_count:
+                old = self._order.pop(0)
+                self._map.pop(old, None)
+
+    def remove(self, key):
+        """移除单个键。
+
+        ``ImageLoader.invalidate()`` 一直调用本方法，但此前类里根本没有它
+        （只有 get/put/clear），一旦被调用必然 AttributeError。这里补齐实现。
+        """
+        with self._lock:
+            self._map.pop(key, None)
+            try:
+                self._order.remove(key)
+            except ValueError:
+                pass
 
     def clear(self):
-        self._map.clear()
-        self._order.clear()
+        with self._lock:
+            self._map.clear()
+            self._order.clear()
 
 
 class ImageLoader(QObject):
@@ -191,6 +220,10 @@ class ImageLoader(QObject):
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(16)
         self._pending = {}
+        # _pending 被 GUI 线程（load 的"检查-再登记"）与线程池 worker
+        # （_on_fetched 的 pop）并发读写，必须加锁，否则检查与登记之间
+        # 会被插入一次 pop，导致该 key 的封面**永久不再加载**。
+        self._pending_lock = threading.Lock()
         self._mem = PixmapCache()
 
     def load(self, key, url, referer=None, is_thumb=False):
@@ -198,14 +231,17 @@ class ImageLoader(QObject):
         if pix is not None and not pix.isNull():
             self.loaded.emit(key, url, pix)
             return
-        if key in self._pending:
-            return
-        self._pending[key] = True
+        with self._pending_lock:
+            if key in self._pending:
+                return
+            self._pending[key] = True
         task = FetchTask(key, url, referer, self._on_fetched, is_thumb)
         self._pool.start(task)
 
     def _on_fetched(self, key, url, pixmap):
-        self._pending.pop(key, None)
+        # 注意：本方法在线程池 worker 线程中执行
+        with self._pending_lock:
+            self._pending.pop(key, None)
         if pixmap is not None and not pixmap.isNull():
             self._mem.put(key, pixmap)
             self.loaded.emit(key, url, pixmap)
@@ -218,5 +254,6 @@ class ImageLoader(QObject):
 
     def shutdown(self):
         self._pool.clear()
-        self._pending.clear()
+        with self._pending_lock:
+            self._pending.clear()
         self._mem.clear()

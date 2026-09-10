@@ -407,7 +407,9 @@ class InfoCard(QFrame):
 
         self.thread = DownloadThread(self.url, self.title, str(savePath), fileType)
         self.thread.progress.connect(self.__onProgress)
-        self.thread.finished.connect(self.__onFinished)
+        # 用自定义信号 downloadFinished（不再覆盖 QThread 内建的 finished），
+        # 且 DownloadThread.run 保证成功/失败都会发出它，按钮不会再永久隐藏
+        self.thread.downloadFinished.connect(self.__onFinished)
         self.thread.start()
 
     def __onProgress(self, current, total):

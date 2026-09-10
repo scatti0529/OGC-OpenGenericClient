@@ -50,11 +50,50 @@ def _get_logger():
     return _log_manager
 
 
-def get_db_connection():
-    """获取数据库连接"""
-    conn = sqlite3.connect(DB_PATH)
+def get_db_connection(busy_timeout_ms: int = 30000):
+    """获取数据库连接（线程安全的用法：每次调用各自新建连接，用完即关）。
+
+    并发加固说明：
+    * 本项目有大量 QThread/threading.Thread 会在后台读写同一份 SQLite 文件
+      （下载进度、使用量统计、订阅等）。默认 journal 模式下读写互斥，
+      并发稍高就会抛 ``sqlite3.OperationalError: database is locked``。
+    * ``timeout`` 是 sqlite3 的忙等超时（等价于 busy_timeout）：遇到锁时先等待
+      而不是立刻报错，避免把瞬时锁竞争放大成业务失败。
+    * 显式设置 ``busy_timeout`` PRAGMA，防止被其他连接/工具改回默认值。
+
+    注意：杜绝跨线程共享同一个 connection —— sqlite3 默认 ``check_same_thread=True``，
+    在别的线程使用会在运行时直接抛异常，正是"线程 A 建连接、线程 B 用"这类闪退来源。
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=max(busy_timeout_ms, 0) / 1000.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+    except Exception:
+        pass
     return conn
+
+
+def _enable_wal_mode():
+    """把数据库切到 WAL 日志模式（幂等，设置后持久保存在库文件中）。
+
+    WAL 下"读不阻塞写、写不阻塞读"，是把本应用从频繁 ``database is locked``
+    里解放出来的关键一步。不支持的场景（如网络共享盘）静默跳过，不影响功能。
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL 在 WAL 下已能保证事务持久性，且显著减少 fsync 次数
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.close()
+        return True
+    except Exception:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return False
 
 
 # ═══════════════ 权限常量 ═══════════════
@@ -152,6 +191,11 @@ def init_db():
     logger = _get_logger()
     try:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        # 启用 WAL：多线程并发读写时不再频繁 database is locked（幂等）
+        try:
+            _enable_wal_mode()
+        except Exception:
+            pass
         # 初始化 JMComic 表
         try:
             init_jmcomic_tables()
