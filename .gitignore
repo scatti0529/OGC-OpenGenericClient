@@ -112,3 +112,5 @@ Thumbs.db
 .dsh-repair/
 .dsh/
 *.zip
+# 本地 AI 助手/会话产物（技能说明），非程序代码，不提交
+SKILL.md

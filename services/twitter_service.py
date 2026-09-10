@@ -51,16 +51,22 @@ class TwitterGalleryDLParser:
     def _resolve_project_dir() -> str:
         """返回 gallery-dl 项目根目录
 
-        查找顺序：
-        1. 环境变量 GALLERY_DL_TWITTER_DIR（GALLERY_DL_PROJECT_DIR）
-        2. 与本项目同级的 twitter / gallery-dl 目录
-        3. 本项目根目录下的 twitter 子目录
-        全都没有时返回 ''（调用方会给出可读的提示）。
+        查找顺序（环境变量优先，相对路径兜底，全部失败返回 ''）：
+        1. 环境变量 GALLERY_DL_TWITTER_DIR（最高优先级，便于自由指定）
+        2. 与本项目同级的 OGC多功能版/twitter 目录
+        3. 与本项目同级的 twitter / gallery-dl 目录
+        4. 本项目根目录下的 twitter 子目录
+
+        这里只使用**相对定位**，不写死任何本机绝对路径，保证换机器/换用户
+        仍可用；非默认布局通过上面的环境变量指定即可。
         """
         if GALLERY_DL_PROJECT_DIR and os.path.isdir(GALLERY_DL_PROJECT_DIR):
             return GALLERY_DL_PROJECT_DIR
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for rel in (('..', 'twitter'), ('..', 'gallery-dl'), ('twitter',)):
+        for rel in (('..', 'OGC多功能版', 'twitter'),
+                    ('..', 'twitter'),
+                    ('..', 'gallery-dl'),
+                    ('twitter',)):
             alt = os.path.normpath(os.path.join(root, *rel))
             if os.path.isdir(alt):
                 return alt
