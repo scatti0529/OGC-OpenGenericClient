@@ -175,12 +175,23 @@ def isWin11():
     return sys.platform == 'win32' and sys.getwindowsversion().build >= 22000
 
 
+# 项目根目录（本文件位于 <root>/ui/widgets/common.py）
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
 class Config(QConfig):
     """应用配置（基于 qfluentwidgets）"""
 
     # folders
     musicFolders = ConfigItem("Folders", "LocalMusic", [], FolderListValidator())
-    downloadFolder = ConfigItem("Folders", "Download", "app/download", FolderValidator())
+    # ⚠️ 默认值必须是「绝对路径」。
+    # 这里原先沿用了 app.* 时代的相对路径 "app/download"，配合 FolderValidator 会在
+    # **当前工作目录**下自动创建 app/download/ —— 于是每运行一次程序（或任何 import
+    # ui.widgets.common 的脚本）都会把已删掉的 app/ 目录重新长出来，且位置随 cwd 漂移。
+    # 现改为项目内固定位置，与 services.download_manager 的下载根目录语义一致。
+    downloadFolder = ConfigItem(
+        "Folders", "Download", os.path.join(_APP_ROOT, 'data', 'download'),
+        FolderValidator())
 
     # main window
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())

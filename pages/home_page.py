@@ -419,14 +419,18 @@ class Home(ScrollArea):
 
         # ---- 功能入口网格（3 列自适应） ----
         gridWidget = QWidget(self.view)
-        grid = QGridLayout(gridWidget)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(14)
+        self._feature_grid = QGridLayout(gridWidget)
+        self._feature_grid.setContentsMargins(0, 0, 0, 0)
+        self._feature_grid.setSpacing(14)
+        # 先全部建出来，等页面真正显示时再按主窗口实有属性剔除不可用入口
+        # （构造顺序所限：Home 比 musicInterface 等属性更早创建，此处判断不了）
+        self._feature_cards = []
         for i, (title, desc, icon, attr) in enumerate(self.FEATURES):
             accent = '#0E8CC0' if not isDarkTheme() else '#4FC3F7'
             card = FeatureCard(title, desc, icon, attr, accent, gridWidget)
+            self._feature_cards.append(card)
             row, col = divmod(i, 3)
-            grid.addWidget(card, row, col)
+            self._feature_grid.addWidget(card, row, col)
         self.vBoxLayout.addWidget(gridWidget)
 
         # ---- 公告 / 更新 / 关于 ----
@@ -436,11 +440,39 @@ class Home(ScrollArea):
     def showEvent(self, e):
         """窗口显示后再填充公告内容（加速首屏显示）。"""
         super().showEvent(e)
+        self._prune_unavailable_cards()
         try:
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(0, self._defer_build_home_content)
         except Exception:
             pass
+
+    def _prune_unavailable_cards(self):
+        """剔除指向「主窗口上不存在的模块」的快捷入口卡片。
+
+        背景：音乐模块是可选依赖，缺失时主窗口会把 ``musicInterface`` 置空
+        （见 ui/main_window.py 的可选导入）。此时首页若仍画着「音乐收听」卡片，
+        用户点上去毫无反应 —— 属于可见的死链，比不显示更糟。
+        这里在主窗口属性齐备之后（showEvent）重排网格，把不可用入口去掉。
+        """
+        win = self.window()
+        grid = getattr(self, '_feature_grid', None)
+        cards = getattr(self, '_feature_cards', None)
+        if win is None or grid is None or not cards:
+            return
+        kept = [c for c in cards
+                if getattr(win, getattr(c, '_window_attr', ''), None) is not None]
+        if len(kept) == len(cards):
+            return                      # 无缺失，保持原布局
+        for card in cards:
+            grid.removeWidget(card)
+            if card not in kept:
+                card.setParent(None)
+                card.deleteLater()
+        for i, card in enumerate(kept):
+            row, col = divmod(i, 3)
+            grid.addWidget(card, row, col)
+        self._feature_cards = kept
 
     def _defer_build_home_content(self):
         try:

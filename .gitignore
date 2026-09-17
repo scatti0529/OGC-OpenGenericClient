@@ -1,21 +1,28 @@
+# ⚠️ 本文件所有「目录型」规则一律用前导 / 锚定到仓库根。
+#    不加锚点的目录规则会匹配**任意深度**的同名目录，本仓库已因此出过两次事故：
+#      · `data/`  吞掉了 ehviewer/data/tag_translations.json.gz（E-Hentai 标签翻译库，1.8MB）
+#      · `music/` 吞掉了 pages/music/（整个音乐模块 UI）
+#    两者都从未进入 git 历史，别人 clone 后一运行就报 ModuleNotFoundError。
+#    新增目录规则时务必写成 /dirname/ 形式。
+
 # ===== Python =====
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -33,8 +40,11 @@ env/
 .env
 
 # ===== 用户数据（敏感，不提交） =====
-data/
-!data/.gitkeep
+# 只忽略仓库根的 data/ 内容；ehviewer/data/ 是程序必需的随包资源，必须入库。
+# 注意 `!/data/.gitkeep` 必须配合 `/data/*`（而非 `data/`）才生效：
+# 父目录被整体排除时，Git 无法再重新包含其中的文件。
+/data/*
+!/data/.gitkeep
 
 # ===== 数据库文件（防泄露，不提交） =====
 *.db
@@ -64,14 +74,15 @@ douyin_cookie.txt
 *xhs_cookie.txt
 
 # ===== 日志 =====
-logs/
+/logs/
 *.log
 *.log.*
 
 # ===== 媒体与下载内容 =====
-music/
-videos/
-temp_videos/
+# 锚定到根目录，否则 `music/` 会连 pages/music/ 一起忽略（历史事故，见文件头说明）
+/music/
+/videos/
+/temp_videos/
 *.mp4
 *.mp3
 *.flv

@@ -42,11 +42,17 @@ def _persist_avatar(source_path: str, username: str) -> str:
 _log_manager = None
 
 def _get_logger():
-    """获取日志管理器实例"""
+    """获取日志管理器实例。
+
+    直接复用 core.logger，**不要**再 import ui.widgets.common：
+    * 分层约定：core 是最底层，反向依赖 ui 会让「UI 依赖缺失 / qfluentwidgets
+      导入失败」连带把数据库日志一起拖挂，故障面被无谓放大；
+    * ui.widgets.common 本身只是历史兼容层，内部同样只是转发 core.logger。
+    """
     global _log_manager
     if _log_manager is None:
-        from ui.widgets.common import log_manager
-        _log_manager = log_manager
+        from core.logger import logger as _core_logger
+        _log_manager = _core_logger
     return _log_manager
 
 
@@ -239,6 +245,11 @@ def init_db():
             )
         conn.commit()
         conn.close()
+        # 内置管理员账号：首次创建数据库时自动写入，保证「克隆下来就能登录」
+        try:
+            ensure_admin_account()
+        except Exception as e:
+            logger.error(f"创建内置管理员账号失败: {str(e)}")
         # 初始化使用量统计表
         try:
             init_usage_table()
@@ -258,6 +269,76 @@ def init_db():
 def _hash_password(password: str) -> str:
     """对密码进行哈希处理"""
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+# ═══════════════ 内置管理员账号 ═══════════════
+
+# 首次创建数据库时自动写入的管理员凭据。
+# 用途：让「克隆 → 装依赖 → 运行」的人无需先注册就能进主界面（注册流程会把
+# 第一个用户的 role 留空，导致没有任何账号能进仪表盘）。
+# 这是本地桌面程序、数据库只存在于用户自己的机器上；默认密码是弱口令，
+# 请登录后立即在「关于我」里修改。
+DEFAULT_ADMIN_USERNAME = 'admin'
+DEFAULT_ADMIN_PASSWORD = '11111111'
+ADMIN_ROLE = '管理员'
+
+
+def ensure_admin_account() -> bool:
+    """确保内置管理员账号存在（每数据库只创建一次）。
+
+    行为约定（重要）：
+    * **幂等**：username 上有 UNIQUE 约束，重复调用不会产生第二条记录；
+    * **绝不覆盖已有密码**：只在账号不存在时写入默认密码。若账号已存在，
+      仅补齐空的 role / permissions —— 否则用户改过的密码会在每次启动时
+      被默默打回默认值，这是个严重的安全回退；
+    * 失败只记录日志、不抛异常：管理员账号创建失败不应阻塞整个程序启动。
+
+    Returns:
+        True 表示本次调用新建了账号；False 表示账号已存在或创建失败。
+    """
+    logger = _get_logger()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, role, permissions FROM users WHERE username=?",
+            (DEFAULT_ADMIN_USERNAME,))
+        row = cursor.fetchone()
+
+        if row is None:
+            cursor.execute(
+                """INSERT INTO users (username, password, avatar_path, role,
+                   info_items, permissions, is_banned)
+                   VALUES (?,?,?,?,?,?,0)""",
+                (DEFAULT_ADMIN_USERNAME,
+                 _hash_password(DEFAULT_ADMIN_PASSWORD),
+                 '', ADMIN_ROLE, '[]',
+                 json.dumps(get_default_permissions(), ensure_ascii=False)))
+            conn.commit()
+            logger.info(
+                f"已创建内置管理员账号「{DEFAULT_ADMIN_USERNAME}」"
+                f"（默认密码 {DEFAULT_ADMIN_PASSWORD}，请登录后尽快修改）")
+            return True
+
+        # 账号已存在：只修补空字段，绝不触碰 password
+        patch, params = [], []
+        if not row['role']:
+            patch.append("role=?")
+            params.append(ADMIN_ROLE)
+        if not row['permissions']:
+            patch.append("permissions=?")
+            params.append(json.dumps(get_default_permissions(), ensure_ascii=False))
+        if patch:
+            params.append(DEFAULT_ADMIN_USERNAME)
+            cursor.execute(
+                f"UPDATE users SET {', '.join(patch)} WHERE username=?", params)
+            conn.commit()
+        return False
+    except Exception as e:
+        logger.error(f"确保内置管理员账号失败: {str(e)}")
+        return False
+    finally:
+        conn.close()
 
 
 # ═══════════════ 用户操作 ═══════════════

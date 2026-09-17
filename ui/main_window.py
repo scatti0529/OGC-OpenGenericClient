@@ -34,7 +34,21 @@ from pages.video.video_multiplatform_page import MultiPlatformVideoInterface, Pl
 from pages.video.pixiv_page_ui import PixivPage
 from pages.video.douyin_page import DouyinPage
 from pages.video.douyin_subscription_page import DouyinSubscriptionPage
-from pages.music.music_page import MusicInterface
+
+# ── 音乐模块（可选依赖，缺失时降级而非崩溃）──
+# 事故背景：pages/music/ 曾被 .gitignore 里的 `music/` 规则误伤，从未进入 git 历史；
+# 而本文件在**模块级无条件导入**它，于是别人 clone 之后一登录就报
+#     ModuleNotFoundError: No module named 'pages.music'
+# 该异常在 ui/login_window.py 的延迟导入处被捕获，表现为弹出
+# 「无法打开主页」错误框 —— 结果是除登录页外**所有**功能都不可用。
+# 现在改为可选导入：缺失时只隐藏音乐入口，视频/画册/邮箱/文件库等照常工作。
+try:
+    from pages.music.music_page import MusicInterface
+    MUSIC_IMPORT_ERROR = None
+except Exception as _music_import_error:   # ImportError 及该模块导入期的任何异常
+    MusicInterface = None
+    MUSIC_IMPORT_ERROR = _music_import_error
+
 from pages.folder_library_page import FolderLibraryPage
 from pages.dashboard_page import DashboardInterface
 from pages.album.album_interface import AlbumInterface
@@ -86,8 +100,18 @@ class Window(SplitFluentWindow):
         self.homeInterface       = Home(self)
         self.homeInterface.setObjectName("首页")  # 添加这一行
         
-        self.musicInterface      = MusicInterface(self)
-        self.musicInterface.setObjectName("音乐")  # 添加这一行
+        # 音乐模块：缺失或初始化失败时降级为 None，导航栏不显示该入口
+        # （见 initNavigation；页面内其它引用一律用 getattr(..., None) 兜底）
+        self.musicInterface = None
+        if MusicInterface is not None:
+            try:
+                self.musicInterface = MusicInterface(self)
+                self.musicInterface.setObjectName("音乐")
+            except Exception as e:
+                self.musicInterface = None
+                logger.error(f"音乐模块初始化失败，已跳过该模块: {e}", exc_info=True)
+        else:
+            logger.warning(f"音乐模块不可用，已跳过该模块: {MUSIC_IMPORT_ERROR}")
         # ★★★ 多平台视频解析页面（主页 + 六大平台子模块） ★★★
         self.videoInterface      = MultiPlatformVideoInterface(self)
         self.videoInterface.setObjectName("视频")  # 添加这一行
@@ -232,7 +256,9 @@ class Window(SplitFluentWindow):
     # ---------------- 导航 ----------------
     def initNavigation(self):
         self.addSubInterface(self.homeInterface,   FIF.HOME,  '首页')
-        self.addSubInterface(self.musicInterface,  FIF.MUSIC, '音乐')
+        # 音乐入口仅在模块可用时添加（缺失时不留死链、不占位）
+        if self.musicInterface is not None:
+            self.addSubInterface(self.musicInterface,  FIF.MUSIC, '音乐')
         
         self.navigationInterface.addSeparator()  # 分界线
         
