@@ -444,6 +444,14 @@ $env:QT_QPA_PLATFORM = 'offscreen'
     `smoke_storage_layout.py` 的**冻结子进程探针**会断言它落在 `user_dir()` 下。
     同类风险点排查口诀：**任何 `sys.argv[0]` / `sys.executable` / `__file__`
     参与拼出来的可写路径，都要问一句"冻结后这指向哪"。**
+28. **Pillow 的 ICO 写入器不会把图放大**：`img.save(x, format='ICO',
+    sizes=[…, (256,256)])` 在源图小于 256×256 时**静默跳过** 256 那一帧，
+    `.ico` 最大只剩 128×128 —— 不报错、不警告。表现是"图标明明换了，但资源管理器
+    用大图标视图看是糊的"。修法：先把源图 `resize((256,256), Image.LANCZOS)`
+    再交给 ICO 写入器（见 `build_exe.py::make_icon()`，它会打印实际写出的尺寸列表）。
+    另一条相关：**只给窗口 `setWindowIcon` 不够**，要在 `main.py` 里
+    `app.setWindowIcon(...)`，否则没有显式设图标的对话框/EhViewer 子窗口在任务栏里
+    是白板图标。
 
 ---
 
@@ -530,6 +538,29 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 > **远程桌面 / 虚拟机 / 无显卡驱动的机器靠它才能启动**）、ANGLE（约 7 MB，Qt5 在 Windows 的
 > 默认 GL 后端）、`Qt5Qml.dll`+`Qt5Quick.dll`（约 8 MB）。合计约 35 MB，但删错的表现是
 > "在别人的机器上启动失败"，本机验证不出来 —— 要删必须换台机器实测。
+
+### 图标：唯一源 `resources/images/logo/icon.png`
+
+三个地方的图标必须来自**同一张图**，否则会出现"资源管理器里是 A、任务栏里是 B"：
+
+| 表面 | 来源 | 生效时机 |
+|---|---|---|
+| exe 文件图标 / 快捷方式 / 安装器 / 卸载器 | 构建期 `build_exe.make_icon()` 由 `icon.png` 生成多尺寸 `icon.ico` → `OGC.spec` 的 `icon=` → 内嵌进 `OGC.exe`；`installer.iss` 的 `SetupIconFile` 用同一个 ico | **必须重新打包** |
+| 任务栏 / Alt+Tab / 所有窗口的默认图标 | `main.py` 里 `app.setWindowIcon(QIcon(APP_ICON))` | 重启程序 |
+| 登录窗口 / 主窗口标题栏 | `resource_paths.LOGIN_LOGO` / `MAIN_LOGO`（= `APP_ICON`） | 重启程序 |
+
+- 唯一常量是 `core.resource_paths.APP_ICON`。换图标就替换那一个 PNG 文件。
+- ⚠️ **换了图片只重启程序是不够的**：exe 文件图标是构建期嵌进去的，不重新打包就还是旧图，
+  而任务栏图标已经变成新图 —— 两边不一致，看起来像"没换成功"。
+- ⚠️ **Pillow 的 ICO 写入器不会把图放大**：源图小于 256×256 时，即使请求了 256×256 也会被
+  静默跳过，`.ico` 最大只有 128×128，Windows 在"大图标/超大图标"视图下只能自己拉伸 → 糊。
+  `make_icon()` 因此先 LANCZOS 放大到 256 再生成全部尺寸，并在源图过小时打印提示
+  （本项目源图是 192×192，想更锐利就换一张 ≥256×256 的）。
+- `logo/logo.png` 与 `icon.png` 是**同一张图**（字节相同），保留 `logo.png` 只因为
+  登录界面的 Qt 资源用的是 `:/images/logo.png`（见 `resources/resource.qrc`）。
+  应用图标一律以 `APP_ICON` 为准，别再往 `logo.png` 上引。
+- 校验：`build_exe.py::verify()` 会用 `ExtractIconExW(exe, -1, ...)` 数 exe 里的图标组，
+  为 0 就报错（PyInstaller 遇到坏图标会静默忽略，不查就发现不了）。
 
 ### 安装 / 卸载行为
 

@@ -7,11 +7,13 @@
 
 用法::
 
-    from core.resource_paths import LOGO_ICON, LOGO_USER_ICON2
-    icon = QIcon(LOGO_ICON)
+    from core.resource_paths import APP_ICON
+    app.setWindowIcon(QIcon(APP_ICON))
 
 ※ 所有路径基于**只读资源根目录**计算（冻结后即 PyInstaller 的 _internal），
   不依赖当前工作目录，也不依赖 exe 所在目录 —— 见 core/paths.py。
+※ 新增资源后请跑 ``scripts/smoke_settings_paths.py``：它会校验这里的每个常量
+  都指向真实存在的文件（曾出现常量指向已删除图片、界面空白却没人发现）。
 """
 import os
 
@@ -37,10 +39,29 @@ def _img(*parts):
 
 
 # ═══════════════════════════════════════════
+#  ★ 应用图标（全程序唯一的一份）
+# ═══════════════════════════════════════════
+# 这张图同时决定了三个地方的图标，必须是同一张，否则会出现
+# "资源管理器里是 A、任务栏里是 B、标题栏里是 C"的错乱：
+#   ① exe 文件图标  —— 打包时 build_exe.make_icon() 由**同一个文件**生成多尺寸
+#                      icon.ico，PyInstaller 嵌进 OGC.exe；安装器 SetupIconFile、
+#                      开始菜单/桌面快捷方式、卸载器显示图标都取自它；
+#   ② 任务栏 / Alt+Tab —— main.py 里 app.setWindowIcon(QIcon(APP_ICON))；
+#   ③ 窗口标题栏      —— 登录/主窗口显式 setWindowIcon（见下方 LOGIN_LOGO/MAIN_LOGO）。
+# ⚠️ 换图标只需替换这一个 PNG 文件，改完必须**重新打包**（icon.ico 是构建期生成的，
+#    不重建的话 exe 文件图标还是旧的，而任务栏图标会立刻变 —— 两边不一致）。
+APP_ICON = _img('logo', 'icon.png')
+
+
+# ═══════════════════════════════════════════
 #  登录窗口 (ui/login_window.py)
 # ═══════════════════════════════════════════
 LOGIN_BACKGROUND = _img('background', 'background.jpg')          # 登录窗口左侧大背景图
-LOGIN_LOGO = _img('logo', 'logo.png')                            # 登录窗口标题栏图标
+# 登录/主窗口标题栏图标统一用 APP_ICON（= logo/icon.png）。
+# 注意 logo/logo.png 与它是**同一张图**（字节完全相同），只是 logo.png 还被
+# 登录界面的 Qt 资源 :/images/logo.png 用着（见 resources/resource.qrc），
+# 所以两个文件都保留；应用图标一律以 APP_ICON 为准。
+LOGIN_LOGO = APP_ICON                                            # 登录窗口标题栏图标
 LOGIN_USER_ICON3 = _img('logo', 'user_icon3.png')                 # 注册页默认头像
 LOGIN_SPLASH_BG = _img('background', 'background-3-4.png')        # 登录成功过渡动画背景图
 LOGIN_RESIZE_BG = _img('background', 'background-3-5.png')        # 登录窗口 resizeEvent 时重置背景
@@ -48,7 +69,7 @@ LOGIN_RESIZE_BG = _img('background', 'background-3-5.png')        # 登录窗口
 # ═══════════════════════════════════════════
 #  主窗口导航 (ui/main_window.py)
 # ═══════════════════════════════════════════
-MAIN_LOGO = _img('logo', 'logo.png')                             # 主窗口标题栏图标 / 窗口图标
+MAIN_LOGO = APP_ICON                                             # 主窗口标题栏图标 / 窗口图标
 MAIN_ABOUT_AVATAR = _img('logo', 'user_icon2.png')                # 主窗口「关于我」导航头像
 NAV_DOUYIN = _img('logo', 'StreamlinePlumpColorTiktok.png')       # 视频 → 抖音导航图标
 NAV_TWITTER = _img('logo', 'LogosTwitter.png')                    # 视频 → 推特(X) 导航图标
@@ -90,7 +111,7 @@ VIDEO_BILIBILI_ICON = _img('logo', 'StreamlineUltimateBilibiliLogoBold.png')  # 
 VIDEO_XVIDEO_ICON = _img('logo', 'XvideosLogo.png')                 # 视频主页 Xvideo 平台卡片图标
 VIDEO_PIXIV_ICON = _img('logo', 'Fa6BrandsPixiv.png')               # 视频主页 Pixiv 平台卡片图标
 VIDEO_YOUTUBE_ICON = _img('logo', 'LogosYoutube.png')               # 视频主页 YouTube 平台卡片图标
-VIDEO_LOGO = _img('logo', 'logo.png')                              # 视频页面应用图标
+VIDEO_LOGO = APP_ICON                                              # 视频页面应用图标
 
 # ═══════════════════════════════════════════
 #  视频 → 单平台 (pages/video/video_page.py)
@@ -98,7 +119,7 @@ VIDEO_LOGO = _img('logo', 'logo.png')                              # 视频页�
 VIDEO_PAGE_DOUYIN = _img('logo', 'StreamlinePlumpColorTiktok.png')  # 旧单平台视频页 抖音 图标
 VIDEO_PAGE_TWITTER = _img('logo', 'LogosTwitter.png')               # 旧单平台视频页 推特(X) 图标
 VIDEO_PAGE_BILIBILI = _img('logo', 'StreamlineUltimateBilibiliLogoBold.png')  # 旧单平台视频页 哔哩哔哩 图标
-VIDEO_PAGE_APP_ICON = _img('logo', 'logo.png')                     # 旧单平台视频页 应用图标
+VIDEO_PAGE_APP_ICON = APP_ICON                                     # 旧单平台视频页 应用图标
 
 # ═══════════════════════════════════════════
 #  音乐播放器 (pages/music/music_player_ui.py)

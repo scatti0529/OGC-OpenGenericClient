@@ -161,6 +161,24 @@ QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
 app = QApplication(sys.argv)
 
+# ── 应用图标：所有窗口 / 对话框 / 任务栏都用同一张图 ──
+# 只给登录窗口和主窗口 setWindowIcon 是不够的：其它窗口（各功能页弹出的对话框、
+# EhViewer 子窗口、启动过渡动画、消息框）没有父窗口图标可用时会退回 Qt 默认的空图标
+# —— 表现为任务栏里出现一个白板图标、Alt+Tab 缩略图没图。
+# 这里设应用级图标，Qt 会自动把它作为所有窗口的默认图标。
+# 图片就是 resources/images/logo/icon.png —— 与 exe 文件图标（build_exe.make_icon()
+# 由同一张 PNG 生成的 icon.ico）是**同一张图**，所以资源管理器里的 exe 图标、
+# 任务栏图标、窗口标题栏图标三处必然一致。
+try:
+    from PyQt5.QtGui import QIcon
+    from core.resource_paths import APP_ICON
+    if APP_ICON and os.path.isfile(APP_ICON):
+        app.setWindowIcon(QIcon(APP_ICON))
+    else:
+        logger.warning(f"应用图标不存在，跳过设置: {APP_ICON}")
+except Exception as _e:
+    logger.error(f"设置应用图标失败（不影响使用）: {_e}")
+
 # ── 全局线程看门狗：拦截所有 QThread.start，退出前统一 requestInterruption + wait，防止 QThread destroyed 闪退 ──
 try:
     import core.thread_guard as _thread_guard

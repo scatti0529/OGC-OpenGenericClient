@@ -296,6 +296,41 @@ def test_no_unreferenced_bundled_images():
         f'resources/images/{_KEEP_FILE}：\n  ' + '\n  '.join(sorted(unref)))
 
 
+def test_app_icon_is_single_source():
+    """应用图标必须只有一份：`logo/icon.png`。
+
+    三个地方的图标都源自它，任何一处指到别的文件都会导致
+    "资源管理器里是 A、任务栏里是 B"：
+      ① exe 文件图标/快捷方式/安装器 —— 构建期 build_exe.make_icon() 由它生成 icon.ico
+      ② 任务栏 / Alt+Tab / 所有窗口默认图标 —— main.py 里 app.setWindowIcon(APP_ICON)
+      ③ 登录/主窗口标题栏 —— LOGIN_LOGO / MAIN_LOGO
+
+    （logo/logo.png 与它是同一张图，被登录界面的 Qt 资源 :/images/logo.png 用着，
+      因此文件保留，但应用图标常量一律指向 icon.png。）
+    """
+    from core import resource_paths as RP
+
+    assert os.path.normcase(os.path.basename(RP.APP_ICON)) == 'icon.png', \
+        f'APP_ICON 必须是 logo/icon.png，实际 {RP.APP_ICON}'
+    assert os.path.normcase(os.path.dirname(RP.APP_ICON)) == \
+        os.path.normcase(os.path.join(RP.PROJECT_ROOT, 'resources', 'images', 'logo')), \
+        f'APP_ICON 必须在 resources/images/logo 下，实际 {RP.APP_ICON}'
+    assert os.path.isfile(RP.APP_ICON), f'应用图标文件不存在: {RP.APP_ICON}'
+
+    for name in ('LOGIN_LOGO', 'MAIN_LOGO', 'VIDEO_LOGO', 'VIDEO_PAGE_APP_ICON'):
+        value = getattr(RP, name)
+        assert os.path.normcase(value) == os.path.normcase(RP.APP_ICON), \
+            f'{name} 应等于 APP_ICON（应用图标只有一份），实际 {value}'
+
+    # exe 里也必须真的有图标 —— 构建期生成，检查产物存在即可（构建脚本自己会核验嵌入）
+    from PIL import Image
+    with Image.open(RP.APP_ICON) as im:
+        assert im.width >= 16 and im.height >= 16, f'图标太小: {im.size}'
+        if im.width < 256:
+            print(f'     (提示) 图标源 {im.width}×{im.height} < 256×256，'
+                  f'构建时会 LANCZOS 放大到 256，想更锐利请换更大的图')
+
+
 if __name__ == '__main__':
     print('=== 设置模块 / 资源引用回归测试 ===')
     step('设置页不再有旧的目录卡片', test_no_legacy_directory_cards)
@@ -306,6 +341,7 @@ if __name__ == '__main__':
     step('资源常量指向真实文件', test_resource_paths_exist)
     step('资源根取自 core.paths', test_resource_root_points_at_project)
     step('打包的图片都被引用（无死素材）', test_no_unreferenced_bundled_images)
+    step('应用图标只有一份（logo/icon.png）', test_app_icon_is_single_source)
 
     if FAILURES:
         print('SETTINGS PATHS RESULT: FAILED ->', FAILURES)
