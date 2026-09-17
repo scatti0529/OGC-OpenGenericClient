@@ -432,9 +432,12 @@ $env:QT_QPA_PLATFORM = 'offscreen'
   GitHub 默认分支为 `main`，本地长期开发在 `master`——推送前确认目标分支，别推错。
 - **本机推送要过系统代理**（`127.0.0.1:7888`，已写进该仓库局部配置 `http.proxy`）：
   直连 GitHub 会 `Recv failure: Connection was reset`。
-  ⚠️ 推送的输出**不可尽信**：推完 `master:main` 之后远端 `master` 会一并前进到同一 commit，
-  于是紧接着的 `master:master` 会报 `cannot lock ref ... is at <新> but expected <旧>`（**假失败**）。
-  判断真实结果一律用 `git ls-remote origin refs/heads/main refs/heads/master`。
+  ⚠️ **推送的报错不可尽信**：经常出现
+  `! [remote rejected] (cannot lock ref 'refs/heads/X': is at <新commit> but expected <旧commit>)`，
+  但**这次推送其实已经生效**了 —— 报错里的 "is at" 就是本次要推的新提交，
+  属于 CAS 校验假失败。**判断真实结果一律用
+  `git ls-remote origin refs/heads/main refs/heads/master`**；
+  若某个分支确实落后，重推一次即可（分支之间不会互相连带更新）。
 - 本机 git 可能因目录属主为 Administrators 而报 `dubious ownership`，需
   `git config --global --add safe.directory <仓库路径>` 才能执行 git 命令。
 - 安全审查类改动后，凭据只存本机、不进归档、不进远端。
