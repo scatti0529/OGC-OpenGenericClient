@@ -152,6 +152,196 @@ def test_cache_hidden_from_listing():
         shutil.rmtree(probe, ignore_errors=True)
 
 
+# ═══════════════ 5b. 冻结（exe）模式：可写数据必须挪出安装目录 ═══════════════
+
+def test_frozen_path_split():
+    """冻结模式的可写数据必须落在 %APPDATA%，不能落在安装目录里。
+
+    这是「能打包成 exe」的前提：程序可能被装到 Program Files 或
+    %LOCALAPPDATA%\\Programs，安装目录通常只读；若 `data/` 仍按 exe 同级
+    解析，普通用户一启动就写不进去（注册、改设置、建索引全失败）。
+    同时资源必须取 `sys._MEIPASS` —— PyInstaller 6.x onedir 把随包数据放在
+    `_internal/`，用 exe 所在目录会找不到 resources/。
+    """
+    import sys as _sys
+    from core import paths as P
+
+    fake_exe = r'C:\Users\X\AppData\Local\Programs\OGC\OGC.exe'
+    fake_internal = r'C:\Users\X\AppData\Local\Programs\OGC\_internal'
+    fake_local = r'C:\Users\X\AppData\Local'
+    fake_roaming = r'C:\Users\X\AppData\Roaming'
+    had_frozen = hasattr(_sys, 'frozen')
+    saved = (getattr(_sys, 'frozen', None), getattr(_sys, '_MEIPASS', None),
+             _sys.executable, os.environ.get('APPDATA'),
+             os.environ.get('LOCALAPPDATA'))
+    try:
+        _sys.frozen = True
+        _sys._MEIPASS = fake_internal
+        _sys.executable = fake_exe
+        # 两个都设：user_dir() 读 APPDATA，但把 LOCALAPPDATA 也一起伪造，
+        # 免得不小心踩到真实用户目录（这条以前就因为只伪造一个而假失败过）。
+        os.environ['LOCALAPPDATA'] = fake_local
+        os.environ['APPDATA'] = fake_roaming
+
+        assert P.is_frozen() is True
+        assert _norm(P.program_dir()) == _norm(r'C:\Users\X\AppData\Local\Programs\OGC')
+        assert _norm(P.resource_root()) == _norm(fake_internal), \
+            '冻结模式资源必须取 sys._MEIPASS（onedir 的 _internal），不能用 exe 目录'
+        assert _norm(P.user_dir()) == _norm(os.path.join(fake_roaming, 'OGC-OpenGenericClient')), \
+            '用户数据应落在 %APPDATA%（与"仅当前用户安装"的范围一致）'
+        assert _under(P.user_dir(), fake_roaming)
+        # 核心不变量：任何可写目录都不许落在安装目录里
+        for name, p in (('user_dir', P.user_dir()),
+                        ('user_log_dir', P.user_log_dir()),
+                        ('user_music_dir', P.user_music_dir())):
+            assert not _under(p, P.program_dir()), \
+                f'{name} 落在安装目录内，装到 Program Files 会写失败: {p}'
+        # 资源与安装目录不是一回事
+        assert _norm(P.resource_root()) != _norm(P.program_dir())
+    finally:
+        if had_frozen:
+            _sys.frozen = saved[0]
+        else:
+            try:
+                del _sys.frozen
+            except AttributeError:
+                pass
+        if saved[1] is None:
+            try:
+                del _sys._MEIPASS
+            except AttributeError:
+                pass
+        else:
+            _sys._MEIPASS = saved[1]
+        _sys.executable = saved[2]
+        for idx, key in ((3, 'APPDATA'), (4, 'LOCALAPPDATA')):
+            if saved[idx] is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = saved[idx]
+
+
+# ═══════════════ 5c. 冻结模式下"可写常量"的推导来源（子进程探针） ═══════════════
+
+_FROZEN_PROBE = r'''
+import json, os, sys
+
+# ⚠️ 必须在 import 任何项目模块之前伪造：这些常量是 import 时算好的。
+sys.frozen = True
+sys._MEIPASS = {internal!r}
+sys.executable = {exe!r}
+os.environ['APPDATA'] = {roaming!r}
+os.environ['LOCALAPPDATA'] = {local!r}
+os.environ['USERPROFILE'] = {home!r}
+os.environ['HOME'] = {home!r}
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
+# 模拟 PyInstaller 的 pyimod04_pywin32：冻结后 pywintypes.py 改成"从 sys.path 找
+# pywintypesNNN.dll"，这一步就是把 pywin32_system32 塞进 sys.path / DLL 搜索路径。
+# 不做的话 qframelesswindow（它 import win32api）会假装导入失败，掩盖真实结论。
+_p32 = {pywin32_system32!r}
+if _p32 and os.path.isdir(_p32):
+    sys.path.append(_p32)
+    try:
+        os.add_dll_directory(_p32)
+    except Exception:
+        pass
+
+out = {{}}
+try:
+    import core.database as db
+    out['core.database.DB_PATH'] = db.DB_PATH
+    out['core.database.AVATAR_DIR'] = db.AVATAR_DIR
+except Exception as e:
+    out['core.database.DB_PATH'] = 'IMPORT-ERROR: %s' % e
+try:
+    import ehviewer.db as ehdb
+    out['ehviewer.db.DB_PATH'] = ehdb.DB_PATH
+except Exception as e:
+    out['ehviewer.db.DB_PATH'] = 'IMPORT-ERROR: %s' % e
+try:
+    from ehviewer.ui.reader_window import PROGRESS_PATH
+    out['reader_window.PROGRESS_PATH'] = PROGRESS_PATH
+except Exception as e:
+    out['reader_window.PROGRESS_PATH'] = 'IMPORT-ERROR: %s' % e
+
+print('PROBE' + json.dumps(out, ensure_ascii=False))
+'''
+
+
+def _find_pywin32_system32():
+    """定位真实的 ``pywin32_system32``（里面有 pywintypesNNN.dll）。
+
+    子进程要伪造 ``sys.frozen``，而 ``qframelesswindow`` 会 import ``win32api``，
+    ``pywintypes.py`` 在冻结状态下改成从 ``sys.path`` 找 DLL —— 不把真实目录给它，
+    导入会以"假失败"告终（PyInstaller 正常产物里由 pyimod04_pywin32 补这一步）。
+    """
+    venv = os.path.dirname(os.path.dirname(sys.executable))
+    cand = os.path.join(venv, 'Lib', 'site-packages', 'pywin32_system32')
+    return cand if os.path.isdir(cand) else ''
+
+
+def test_frozen_writable_constants_follow_user_dir():
+    """可写路径常量必须来自 ``core.config``（→ 冻结时落在 ``user_dir()``）。
+
+    ``core/database.py`` / ``ehviewer/db.py`` / ``ehviewer/ui/reader_window.py``
+    历史上都用 ``__file__`` 推 ``data/``：冻结后 ``__file__`` 指向 ``_internal/``，
+    于是账号库、头像、阅读进度全写进**安装目录**。实测残留过
+    ``_internal\\data\\ogc_users.db`` —— 那次恰好装在用户可写目录所以没报错，
+    一旦装到 Program Files 就是"启动即失败"。
+
+    为什么必须开**子进程**测：这些常量在 import 那一刻就定死了，父进程里改
+    ``sys.frozen`` 只影响之后的函数调用，内存里的常量仍是源码模式的值 ——
+    那样测等于没测（假阴性）。子进程先伪造再 import，才真进冻结分支。
+
+    断言写成"必须落在 user_dir() 下"而不是"不能落在安装目录下"：子进程里
+    ``__file__`` 仍是**真实源码路径**，旧写法算出来的是真实项目根，它当然不在
+    伪造的安装目录下 —— 用后者会漏掉这个 bug。
+    """
+    import subprocess
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix='ogc-frozen-probe-')
+    install = os.path.join(tmp, 'fake_install')
+    internal = os.path.join(install, '_internal')
+    roaming = os.path.join(tmp, 'AppData', 'Roaming')
+    local = os.path.join(tmp, 'AppData', 'Local')
+    home = os.path.join(tmp, 'home')
+    for d in (internal, roaming, local, home):
+        os.makedirs(d, exist_ok=True)
+
+    probe = _FROZEN_PROBE.format(
+        internal=internal, exe=os.path.join(install, 'OGC.exe'),
+        roaming=roaming, local=local, home=home,
+        pywin32_system32=_find_pywin32_system32())
+
+    env = dict(os.environ)
+    env['QT_QPA_PLATFORM'] = 'offscreen'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    try:
+        proc = subprocess.run([sys.executable, '-u', '-c', probe], cwd=BASE,
+                              capture_output=True, text=True, encoding='utf-8',
+                              errors='replace', env=env, timeout=300)
+        line = next((l for l in (proc.stdout or '').splitlines()
+                     if l.startswith('PROBE')), None)
+        assert line, ('子进程未返回探针结果\n'
+                      f'stdout={proc.stdout}\nstderr={(proc.stderr or "")[-3000:]}')
+        data = json.loads(line[len('PROBE'):])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    user_dir = os.path.join(roaming, 'OGC-OpenGenericClient')
+    assert data, '探针没有采集到任何路径'
+    for label, value in sorted(data.items()):
+        value = str(value)
+        assert not value.startswith('IMPORT-ERROR'), f'{label} 导入失败: {value}'
+        assert os.path.isabs(value), f'{label} 应为绝对路径: {value}'
+        assert _under(value, user_dir), (
+            f'{label} 冻结后必须落在 user_dir() 下（{user_dir}），实际 {value} —— '
+            '说明它还在用 __file__/sys.executable 推导，会写进安装目录')
+        assert not _under(value, internal), f'{label} 落在了 _internal/ 里: {value}'
+
+
 # ═══════════════ 5. 迁移演练（幂等 + 真的搬对了） ═══════════════
 
 class _StubCfg:
@@ -291,6 +481,9 @@ if __name__ == '__main__':
     step('缓存都在 下载根/.cache 下', test_caches_live_in_download_root)
     step('索引 JSON 都在 data/ 下', test_indexes_live_in_data)
     step('缓存不出现在文件库列表里', test_cache_hidden_from_listing)
+    step('冻结模式：可写数据挪出安装目录', test_frozen_path_split)
+    step('冻结模式：可写常量来自 user_dir（子进程）',
+         test_frozen_writable_constants_follow_user_dir)
     step('迁移演练：旧布局 → 新布局（幂等）', test_migration_moves_legacy_layout)
     step('迁移去重/冲突规则', test_migration_dedupe_and_conflict_rules)
     if FAILURES:

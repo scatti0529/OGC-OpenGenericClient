@@ -233,8 +233,13 @@ EXAMPLE_URL = "https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/master/exampl
 FEEDBACK_URL = "https://github.com/zhiyiYo/PyQt-Fluent-Widgets/issues"
 RELEASE_URL = "https://github.com/zhiyiYo/PyQt-Fluent-Widgets/releases/latest"
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-config_path = os.path.join(os.path.dirname(os.path.dirname(base_dir)), 'resources', 'config', 'config.json')
+# GUI 配置路径：
+#   · 源码模式 → 项目内 resources/config/config.json（零行为变化）
+#   · 冻结模式 → 安装目录只读，必须落 %APPDATA%（首次用随包默认值播种）
+from core import paths as _paths
+
+base_dir = str(_paths.resource_root())
+config_path = _paths.gui_config_path()
 cfg = Config()
 cfg.themeMode.value = Theme.AUTO
 qconfig.load(config_path, cfg)
@@ -253,7 +258,9 @@ class StyleSheet(StyleSheetBase, Enum):
     NAVIGATION_VIEW_INTERFACE = "navigation_view_interface"
 
     def path(self, theme=Theme.AUTO):
-        qss_path = os.path.join(os.path.dirname(os.path.dirname(base_dir)), 'resources', 'qss')
+        # base_dir 现在是**只读资源根目录**（冻结后即 _internal），
+        # 不能再用 __file__ 逐级上推 —— 那样在打包后容易指错。
+        qss_path = os.path.join(base_dir, 'resources', 'qss')
         theme = qconfig.theme if theme == Theme.AUTO else theme
         return f"{qss_path}/{theme.value.lower()}/{self.value}.qss"
 

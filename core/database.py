@@ -10,10 +10,20 @@ import json
 from datetime import datetime
 import traceback
 
-# 数据库文件路径（项目根目录下 data/ogc_users.db）
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, 'data', 'ogc_users.db')
-AVATAR_DIR = os.path.join(BASE_DIR, 'data', 'avatars')
+# 数据库与头像目录都是**可写用户数据**，必须走 core.config 的权威解析
+# （冻结时 = %APPDATA%\OGC-OpenGenericClient，源码时 = <程序根>/data）。
+#
+# ⚠️ 绝不能再用 __file__ 推导：冻结后 __file__ 指向 _internal/，会把数据库写进
+#    **安装目录**。装在 Program Files 时普通用户没有写权限，程序直接启动失败；
+#    实测残留过 _internal\data\ogc_users.db（那次装在用户可写目录，所以没报错，
+#    属于"侥幸能跑"）。
+#
+# 保持模块级变量形式：已有测试与脚本通过 monkeypatch db.DB_PATH 来隔离数据。
+from core.config import config as CFG
+
+BASE_DIR = str(CFG.data)
+DB_PATH = os.path.join(BASE_DIR, 'ogc_users.db')
+AVATAR_DIR = os.path.join(BASE_DIR, 'avatars')
 
 
 def _persist_avatar(source_path: str, username: str) -> str:

@@ -107,7 +107,12 @@ class DirectoryScanWorker(QThread):
 
 
 class BatchThumbnailWorker(QThread):
-    """主动遍历目录（含子目录）批量生成缩略图，已有缩略图自动跳过"""
+    """主动遍历目录（含子目录）批量生成缩略图，已有缩略图自动跳过
+
+    顺带统计「因为缺 ffmpeg 而拿不到封面的视频数」：ffmpeg 不随包内置
+    （完整构建 150~170 MB，只用来抽视频首帧），所以第一次真的遇到视频时
+    才提示用户按需获取 —— 见 ``FolderLibraryPage._maybe_prompt_ffmpeg``。
+    """
     progress = pyqtSignal(int, int, str)
     finished = pyqtSignal()
 
@@ -116,6 +121,8 @@ class BatchThumbnailWorker(QThread):
         self.root = root
         self.max_files = max_files
         self._stop = False
+        #: 本次有多少个视频因为找不到 ffmpeg 而没生成封面（供收尾时判断要不要提示）
+        self.videos_skipped = 0
 
     def stop(self):
         """请求停止（协作式：循环中检查，尽快退出）。"""
@@ -147,6 +154,11 @@ class BatchThumbnailWorker(QThread):
         items = self._collect_media()
         total = len(items)
         done = 0
+        # 只在开头探一次 ffmpeg（find_ffmpeg 内部有缓存），别在循环里反复 stat
+        try:
+            has_ffmpeg = bool(FL.find_ffmpeg())
+        except Exception:
+            has_ffmpeg = False
         for p in items:
             if self._stop:
                 break
@@ -159,7 +171,11 @@ class BatchThumbnailWorker(QThread):
                 if kind == 'image':
                     FL.get_image_thumbnail(p)
                 elif kind == 'video':
-                    if FL.VIDEO_COVER_SEM.acquire(timeout=5):
+                    if not has_ffmpeg:
+                        # 没有 ffmpeg 就一定抽不出帧：直接跳过，别白跑一遍
+                        # （get_video_thumbnail 会立刻返回空串，但每次都要 stat 一遍）
+                        self.videos_skipped += 1
+                    elif FL.VIDEO_COVER_SEM.acquire(timeout=5):
                         try:
                             FL.get_video_thumbnail(p)
                         finally:
@@ -1201,8 +1217,44 @@ class FolderLibraryPage(QScrollArea):
         self.thumb_progress_label.setVisible(True)
 
     def _on_batch_finished(self):
+        skipped = 0
+        try:
+            if self._batch_worker is not None:
+                skipped = int(getattr(self._batch_worker, 'videos_skipped', 0) or 0)
+        except Exception:
+            skipped = 0
         self._batch_worker = None
         self.thumb_progress_label.setVisible(False)
+        if skipped > 0:
+            self._maybe_prompt_ffmpeg(skipped)
+
+    def _maybe_prompt_ffmpeg(self, skipped: int):
+        """有视频因为缺 ffmpeg 出不来封面 → 按需提示一次。
+
+        用户的明确要求：**第一次真的需要时**弹窗说明原因，可以「立即下载 /
+        手动指定 / 稍后」，并带「我已知晓，下次不再显示」；下载成功会自动
+        解压并把路径绑定进程序（写进配置 ffmpeg_path）。
+
+        提示流程整体包在 try 里 —— 缺个封面是小事，把文件库搞崩是大事。
+        """
+        try:
+            from ui.widgets.ffmpeg_prompt import maybe_prompt_ffmpeg
+            from core.logger import logger
+            logger.info(f'[文件库] {skipped} 个视频缺少 ffmpeg，无法生成封面')
+            got = maybe_prompt_ffmpeg(self)
+            if got:
+                # 已经可用（刚装好/刚绑定）→ 重跑一遍，把刚才跳过的视频补上封面
+                InfoBar.success('ffmpeg 已就绪', '正在为视频补生成封面…',
+                                position=InfoBarPosition.TOP_RIGHT,
+                                duration=3000, parent=self)
+                if self._current_path:
+                    self._start_batch_thumbnail(self._current_path)
+        except Exception as e:
+            try:
+                from core.logger import logger as _lg
+                _lg.error(f'[文件库] ffmpeg 提示流程失败: {e}', exc_info=True)
+            except Exception:
+                pass
 
     def _on_scan_failed(self, gen: int, msg: str):
         if gen != self._scan_generation:

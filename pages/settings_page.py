@@ -1,4 +1,5 @@
 # coding:utf-8
+import os
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, FolderListSettingCard,
                             OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
@@ -323,6 +324,61 @@ class SettingInterface(ScrollArea):
 
 
 
+        # ── 维护：工作区状态 / 用户数据 / 卸载 ──
+        # 卸载入口放在这里（用户明确要求"加入卸载程序代码以及按钮"）。
+        # 注意：按钮是**交互式**启动卸载器，不静默执行 —— 让用户看到卸载器
+        # 自己的询问（是否清理 .cache、是否删除用户数据），而不是由程序替他决定。
+        self.maintenanceGroup = SettingCardGroup(self.tr('维护'), self.scrollWidget)
+
+        self.workspaceCard = PushSettingCard(
+            self.tr('打开'),
+            FIF.FOLDER,
+            self.tr('下载工作区'),
+            self.tr('读取中…'),
+            self.maintenanceGroup
+        )
+        self.userDataCard = PushSettingCard(
+            self.tr('打开'),
+            FIF.FOLDER,
+            self.tr('用户数据目录'),
+            self.tr('账号、配置与索引的存放位置（卸载时默认保留）'),
+            self.maintenanceGroup
+        )
+        self.uninstallCard = PushSettingCard(
+            self.tr('卸载'),
+            FIF.CANCEL,
+            self.tr('卸载本程序'),
+            self.tr('只卸载程序本体；下载内容与工作区标记始终保留'),
+            self.maintenanceGroup
+        )
+
+        # ── 工具依赖：ffmpeg 按需获取 ──
+        # ffmpeg **不随包内置**（完整构建 150~170 MB，而全项目只拿它抽视频首帧当
+        # 封面）。这里给三条路：自动下载 / 手动指定 / 清除重找。
+        self.toolGroup = SettingCardGroup(self.tr('工具依赖'), self.scrollWidget)
+
+        self.ffmpegCard = PushSettingCard(
+            self.tr('自动下载'),
+            FIF.DOWNLOAD,
+            self.tr('ffmpeg（视频封面）'),
+            self.tr('状态读取中…'),
+            self.toolGroup
+        )
+        self.ffmpegPickCard = PushSettingCard(
+            self.tr('选择文件…'),
+            FIF.FOLDER,
+            self.tr('手动指定 ffmpeg'),
+            self.tr('已经装好了？直接选 ffmpeg.exe；下的是压缩包就选 .zip/.7z，会自动解压'),
+            self.toolGroup
+        )
+        self.ffmpegClearCard = PushSettingCard(
+            self.tr('清除'),
+            FIF.DELETE,
+            self.tr('清除 ffmpeg 绑定'),
+            self.tr('清除后重新按 内置 → 环境变量 → PATH 的顺序查找'),
+            self.toolGroup
+        )
+
         # application
         self.aboutGroup = SettingCardGroup(self.tr('关于'), self.scrollWidget)
         self.helpCard = HyperlinkCard(
@@ -394,6 +450,13 @@ class SettingInterface(ScrollArea):
         self.musicInThisPCGroup.addSettingCard(self.musicDownloadFolderCard)
         self.musicInThisPCGroup.addSettingCard(self.videoDownloadRootCard)
 
+        self.maintenanceGroup.addSettingCard(self.workspaceCard)
+        self.maintenanceGroup.addSettingCard(self.userDataCard)
+        self.maintenanceGroup.addSettingCard(self.uninstallCard)
+        self.toolGroup.addSettingCard(self.ffmpegCard)
+        self.toolGroup.addSettingCard(self.ffmpegPickCard)
+        self.toolGroup.addSettingCard(self.ffmpegClearCard)
+
         self.downloadGroup.addSettingCard(self.downloadModeCard)
         self.downloadGroup.addSettingCard(self.downloadMaxThreadsCard)
         self.downloadGroup.addSettingCard(self.downloadThresholdCard)
@@ -429,6 +492,8 @@ class SettingInterface(ScrollArea):
         self.expandLayout.addWidget(self.logGroup)
         self.expandLayout.addWidget(self.autoLoginGroup)
         self.expandLayout.addWidget(self.updateSoftwareGroup)
+        self.expandLayout.addWidget(self.maintenanceGroup)
+        self.expandLayout.addWidget(self.toolGroup)
         self.expandLayout.addWidget(self.aboutGroup)
 
 
@@ -475,6 +540,25 @@ class SettingInterface(ScrollArea):
             return
         CFG['video_download_root'] = folder
         self.videoDownloadRootCard.setContent(folder)
+        # 换了下载根目录 → 工作区标记与可移植索引副本要跟着搬到新目录，
+        # 否则重装后在新目录里找不到工作区、恢复不了索引。
+        # 复制几 MB 索引，放后台线程，别卡住设置页。
+        try:
+            import threading
+            from core import workspace as _ws, shell_integration as _shell
+
+            def _resync():
+                try:
+                    _ws.sync_workspace()
+                    _shell.register_paths()
+                except Exception:
+                    pass
+
+            threading.Thread(target=_resync, daemon=True,
+                             name='OGC-WorkspaceMove').start()
+        except Exception:
+            pass
+        self.refresh_maintenance()
         # 重新创建平台子目录
         try:
             from services.download_manager import ensure_download_dirs
@@ -563,6 +647,30 @@ class SettingInterface(ScrollArea):
         install_hover_tip(self.feedbackCard, "提供反馈", "打开反馈页面，帮助我们改进应用程序")
         install_hover_tip(self.aboutCard, "关于", "查看应用版本信息并检查更新")
 
+        # ── 维护区 ──
+        install_hover_tip(self.workspaceCard, "下载工作区",
+                          "打开下载根目录。这里保存着工作区标记与可移植索引，重装后能自动恢复")
+        install_hover_tip(self.userDataCard, "用户数据目录",
+                          "账号、权限、配置与索引的存放位置；卸载时默认保留")
+        install_hover_tip(self.uninstallCard, "卸载本程序",
+                          "只卸载程序本体。下载内容与服务标记保留，缓存与用户数据会分别询问")
+        self.workspaceCard.clicked.connect(self.__onOpenWorkspace)
+        self.userDataCard.clicked.connect(self.__onOpenUserData)
+        self.uninstallCard.clicked.connect(self.__onUninstall)
+        self.refresh_maintenance()
+
+        # ── 工具依赖区（ffmpeg）──
+        install_hover_tip(self.ffmpegCard, "自动下载 ffmpeg",
+                          "下载到下载根目录并自动解压绑定（约 40 MB）。只用它抽视频首帧当封面")
+        install_hover_tip(self.ffmpegPickCard, "手动指定 ffmpeg",
+                          "选 ffmpeg.exe 直接绑定；选 .zip/.7z 压缩包会先解压再绑定")
+        install_hover_tip(self.ffmpegClearCard, "清除绑定",
+                          "清除后重新按 内置 → 环境变量 → PATH 的顺序查找")
+        self.ffmpegCard.clicked.connect(self.__onFfmpegDownload)
+        self.ffmpegPickCard.clicked.connect(self.__onFfmpegPick)
+        self.ffmpegClearCard.clicked.connect(self.__onFfmpegClear)
+        self.refresh_ffmpeg()
+
         # 自动登录
         self.autoLoginSwitch.checkedChanged.connect(self._on_auto_login_switch)
         self.autoAccountCombo.currentTextChanged.connect(self._on_account_selected)
@@ -571,6 +679,158 @@ class SettingInterface(ScrollArea):
         install_hover_tip(self.addAccountBtn, "添加账号", "新增一个用于自动登录的账号（账号名+密码）")
         install_hover_tip(self.delAccountBtn, "删除账号", "删除下拉框中当前选中的账号")
         self.refresh_auto_login()
+
+    # ---------------- 维护（工作区 / 用户数据 / 卸载） ----------------
+    def refresh_maintenance(self):
+        """刷新维护区显示。
+
+        所有异常都必须吞掉：状态显示不出来是小事，**设置页打不开**是大事。
+        """
+        try:
+            from core import workspace as _ws
+            info = _ws.summary(CFG.download_root)
+            if info.get('has_workspace'):
+                self.workspaceCard.setContent(
+                    f"{info['path']}　·　工作区标记更新于 {info.get('updated_at', '')}")
+            else:
+                self.workspaceCard.setContent(f"{info['path']}　·　尚无工作区标记")
+        except Exception:
+            try:
+                self.workspaceCard.setContent('状态读取失败')
+            except Exception:
+                pass
+
+        try:
+            from core import shell_integration as _shell
+            inst = _shell.install_summary()
+            if inst.get('installed'):
+                self.uninstallCard.setVisible(True)
+                self.uninstallCard.setContent(f"安装于 {inst.get('install_dir')}")
+            else:
+                # 源码运行 / 直接跑 exe：根本没有卸载器。
+                # 隐藏入口，而不是留一个点了没反应的按钮。
+                self.uninstallCard.setVisible(False)
+        except Exception:
+            try:
+                self.uninstallCard.setVisible(False)
+            except Exception:
+                pass
+
+    # ---------------- 工具依赖（ffmpeg）----------------
+    def refresh_ffmpeg(self):
+        """刷新 ffmpeg 卡片状态。
+
+        和 refresh_maintenance 一样：**任何异常都必须吞掉** ——
+        状态显示不出来是小事，设置页打不开是大事。
+        """
+        try:
+            from services import file_library as _FL
+            from core.config import config as _CFG
+            found = _FL.find_ffmpeg()
+            bound = str(_CFG.get('ffmpeg_path', '') or '')
+            if found:
+                source = '已手动指定' if bound and os.path.normcase(bound) == os.path.normcase(found) \
+                    else '自动查找到'
+                self.ffmpegCard.setContent(f'{source}：{found}')
+            else:
+                self.ffmpegCard.setContent(
+                    '未找到 ffmpeg —— 本地视频会显示不出封面（其他功能不受影响）')
+            # 没绑定过就没什么可清除的
+            self.ffmpegClearCard.setVisible(bool(bound))
+        except Exception:
+            try:
+                self.ffmpegCard.setContent('状态读取失败')
+                self.ffmpegClearCard.setVisible(False)
+            except Exception:
+                pass
+
+    def __onFfmpegDownload(self):
+        """一键下载 ffmpeg（下载 → 解压 → 绑定 → 打开目录）。"""
+        try:
+            from ui.widgets.ffmpeg_prompt import run_download_dialog
+        except Exception as e:
+            InfoBar.error('无法加载组件', str(e), position=InfoBarPosition.TOP,
+                          duration=4000, parent=self)
+            return
+        got = run_download_dialog(self)
+        self.refresh_ffmpeg()
+        if got:
+            InfoBar.success(
+                title='ffmpeg 已就绪', content=got,
+                orient=Qt.Horizontal, isClosable=True,
+                position=InfoBarPosition.TOP_RIGHT, duration=4000, parent=self)
+
+    def __onFfmpegPick(self):
+        """手动指定：ffmpeg.exe 或压缩包（.zip/.7z）。"""
+        try:
+            from ui.widgets.ffmpeg_prompt import _pick_and_bind
+        except Exception as e:
+            InfoBar.error('无法加载组件', str(e), position=InfoBarPosition.TOP,
+                          duration=4000, parent=self)
+            return
+        _pick_and_bind(self)
+        self.refresh_ffmpeg()
+
+    def __onFfmpegClear(self):
+        try:
+            from services.ffmpeg_installer import unbind
+            unbind()
+        except Exception as e:
+            InfoBar.error('清除失败', str(e), position=InfoBarPosition.TOP,
+                          duration=4000, parent=self)
+        self.refresh_ffmpeg()
+
+    def __onOpenWorkspace(self):
+        try:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(CFG.download_root))
+        except Exception as e:
+            InfoBar.error('打开失败', str(e), position=InfoBarPosition.TOP,
+                          duration=3000, parent=self)
+
+    def __onOpenUserData(self):
+        try:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(CFG.data)))
+        except Exception as e:
+            InfoBar.error('打开失败', str(e), position=InfoBarPosition.TOP,
+                          duration=3000, parent=self)
+
+    def __onUninstall(self):
+        """启动卸载程序。
+
+        刻意**交互式**启动（不加 /SILENT）：卸载器自己会问「是否清理 .cache」
+        与「是否删除用户数据」，由用户当场决定，程序不替他做主。
+
+        启动后本程序必须退出 —— 否则文件被占用，卸载会半途而废、留下半个程序。
+        """
+        from PyQt5.QtWidgets import QMessageBox, QApplication
+        try:
+            from core import shell_integration as _shell
+            if not _shell.is_installed_copy():
+                QMessageBox.information(
+                    self, '无法卸载',
+                    '当前不是通过安装程序安装的副本，因此没有卸载程序。\n\n'
+                    '如果是从源码运行，直接删除程序目录即可。\n'
+                    '用户数据与下载内容不会被自动删除。')
+                return
+            r = QMessageBox.question(
+                self, '确认卸载',
+                '即将启动卸载程序。\n\n'
+                '· 只卸载程序本体\n'
+                '· 下载内容与工作区标记始终保留\n'
+                '· 缓存与用户数据由卸载程序分别询问（默认都不删）\n\n'
+                '为避免文件被占用，本程序会随即退出。是否继续？',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
+            ok, msg = _shell.launch_uninstaller()
+            if not ok:
+                QMessageBox.warning(self, '启动卸载失败', msg)
+                return
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+        except Exception as e:
+            QMessageBox.warning(self, '卸载出错', str(e))
 
     # ---------------- 自动登录 ----------------
     def refresh_auto_login(self):

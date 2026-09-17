@@ -14,6 +14,26 @@ plugin_dir = os.path.join(site_packages, 'PyQt5', 'Qt5', 'plugins')
 if os.path.isdir(os.path.join(plugin_dir, 'platforms')):
     os.environ.setdefault('QT_QPA_PLATFORM_PLUGIN_PATH', plugin_dir)
 
+
+def _exit_skip_qt_teardown(code):
+    """用 ``os._exit`` 直接结束进程，跳过解释器退出流程。
+
+    本脚本会构建**真实窗口**，窗口里的 worker（QThread）在脚本跑完时仍在运行。
+    正常 ``sys.exit`` 会走 Qt 的清理流程，撞上
+    ``QThread: Destroyed while thread is still running`` **直接 abort**
+    （退出码 0xC0000409 = -1073740791）—— 于是"测试通过"看起来像"崩溃"，
+    按 AGENTS.md §6 的约定（成功必须是 0）等于永远失败。
+
+    生产程序不怕这个：``core/thread_guard.py`` 在退出时统一
+    ``requestInterruption + wait``。临时冒烟脚本没有也不需要那套收尾。
+    """
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(code)
+
 try:
     import ui.main_window as mw
     print('[OK] ui.main_window imported')
@@ -40,8 +60,8 @@ try:
     print('[OK] ehentai favorites tab switch works inside Window')
 
     print('WINDOW TEST RESULT: ALL PASSED')
-    sys.exit(0)
+    _exit_skip_qt_teardown(0)
 except Exception:
     traceback.print_exc()
     print('WINDOW TEST RESULT: FAILED')
-    sys.exit(1)
+    _exit_skip_qt_teardown(1)

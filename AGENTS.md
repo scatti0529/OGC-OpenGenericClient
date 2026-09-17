@@ -78,6 +78,8 @@ pages/               功能页面：home / settings / about / dashboard / jmcomi
 services/            业务与网络层（下载引擎、各平台解析与下载、邮件、漫画库、订阅）
   services/douyin/   抖音签名算法（abogus / xbogus）
   services/easycopy/ 拷贝漫画服务（api / app / parser / downloader / net / models）
+  services/ffmpeg_installer.py  ffmpeg 按需下载/解压/绑定（**不含 Qt**，见 §10）
+ui/widgets/ffmpeg_prompt.py     缺 ffmpeg 的弹窗 + 下载工作线程（**含 Qt**，见 §10）
 ehviewer/            EhViewer 核心移植
   ehviewer/*.py      引擎 / 解析 / session / db / models / downloader / image_cache / 标签翻译
   ehviewer/ui/       Qt 界面层（画廊列表 / 详情 / 阅读器 / 收藏 / 历史 / 下载 / 搜索）
@@ -89,7 +91,12 @@ data/                **小体积、不可再生**：索引 JSON、配置、数�
   data/7Z/  data/avatars/   解压器 / 头像     data/_migration_backup_*/  迁移备份（可删）
 logs/                运行日志 ——**不进仓库**
 tests/               空占位目录（只有 `__init__.py`）；真实回归都在 `scripts/`
+
+本机另有一个**构建工作区**（与源码目录平级，不属于本仓库，见 §10）：
+  ../OGC-OpenGenericClient-exe/    packaging/（spec、iss、构建脚本）· build/ · dist/
 ```
+
+> 📦 **打包相关的一切都以 §10 为准**（冻结、安装器、卸载、工作区标记）。
 
 > 🗂️ **缓存与数据是分开的（2026-09 重构，务必遵守）**
 > `{下载根目录}/.cache/` 存**大体积可再生**缓存（`thumbs/`、`ehentai/`、`easycopy/`），
@@ -246,6 +253,22 @@ CFG.set_root(项目根)                   # 仅维护脚本需要（见下）
   会解析成 `scripts/`，于是 `data/` 变成 `scripts/data`（这是为了让冒烟测试与真实数据隔离，别改）。
   需要动真实 `data/` 的脚本（如 `scripts/migrate_storage.py`）不调用它就会改错地方。
 
+### 4.10 冻结（exe）模式：写数据的路径规则
+
+打包后 `python main.py` 那套假设全部不成立，三条硬规则：
+
+1. **可写数据一律走 `core/paths.user_dir()`**（冻结时 = `%APPDATA%\OGC-OpenGenericClient`），
+   **绝不能**落在安装目录 —— 用户可能装到 Program Files / `%LOCALAPPDATA%\Programs`，那里通常只读。
+   实测过一次反面案例：`data/` 按 exe 同级解析，结果程序把库和缓存写进了安装目录。
+2. **只读资源一律走 `core/paths.resource_root()`**（冻结时 = `sys._MEIPASS`，即 onedir 的
+   `_internal/`）。**不能**用 exe 所在目录 —— PyInstaller 6.x 把随包数据放在 `_internal/` 下。
+3. **下载根目录默认值不能是 data/**：下载内容 + `.cache` 缓存动辄几百 MB 到数 GB。
+   默认取 `~\Downloads\OGC-OpenGenericClient`（见 `_default_download_root()`）。
+   同一条理由：`%APPDATA%` 放得下几 MB 的索引与账号库，放不下缓存。
+
+> 判断某个新文件该放哪，只问一句：**它是不是随程序分发、且永不修改？**
+> 是 → `resource_root()`；否 → `user_dir()`；体积大且可再生 → `CFG.cache_path(...)`。
+
 ---
 
 ## 5. 运行时可靠性三件套（改代码前必须理解）
@@ -282,7 +305,9 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | 脚本 | 覆盖 |
 |------|------|
 | `smoke_fresh_install.py` | **全新安装**：随包模块/资源是否齐全、core 未反向依赖 ui、首建库自带管理员且不覆盖密码 |
-| `smoke_storage_layout.py` | **存储布局**：缓存只在 `{下载根}/.cache`、索引只在 `data/`、缓存不出现在文件库列表、迁移幂等与去重/冲突规则 |
+| `smoke_storage_layout.py` | **存储布局**：缓存只在 `{下载根}/.cache`、索引只在 `data/`、缓存不出现在文件库列表、迁移幂等与去重/冲突规则、**冻结模式可写数据不落安装目录**、**子进程探针校验"可写路径常量"来自 `user_dir()`** |
+| `smoke_workspace.py` | **工作区标记**：可移植副本与标记生成、**凭据绝不落进下载目录**、全新安装自动还原、已有数据时不擅自动手、拒绝更高 schema、换盘改写索引路径 |
+| `smoke_ffmpeg_setup.py` | **ffmpeg 按需获取**：`ffmpeg_path` 优先级最高、解压→定位→绑定全链路、找不到时优雅降级、弹窗动作与「下次不再显示」、**已可用/不再提示时不弹窗**、缺 ffmpeg 时文件库如实统计跳过的视频数 |
 | `smoke_test_album.py` | 画册：编译 + 导入 + 无头构建页面 |
 | `smoke_test_ehentai_fix.py` / `smoke_eh_*.py` | E-Hentai：新结构、分页、同步、下载队列、写库、对账 |
 | `smoke_test_easycopy.py` / `smoke_test_readers.py` | 拷贝漫画 / 各阅读器 |
@@ -299,6 +324,17 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 4. 涉及启动链路的改动，跑 `smoke_startup_lifecycle.py`。
 
 > ⚠️ 验证陷阱：`PyQt5` 的 `exec_` 是**存在**的（`exec` 才是 PyQt6 写法）。用静态文本搜「`exec_` 已废弃」会得到假阳性，别顺手改成 `exec` 而不是实际运行程序。
+
+> ⚠️ **两个冒烟脚本的退出码不可信，要看打印内容**：
+> `scripts/smoke_test_album.py` 会无头构建真实页面，跑完全部检查后仍以
+> `QThread: Destroyed while thread is still running` **进程级 abort**
+> （退出码 `-1073740791`），连 `SMOKE TEST RESULT: ALL PASSED` 都来不及打印。
+> 已在 `git worktree` 的 **HEAD 基线上复现同样行为**（试过 `os._exit`、`gc.disable()`、
+> 留住页面强引用，均无效 —— 是 Qt 自身析构时序），所以**判断它通过与否要看
+> 有没有 `[FAIL]` 与 `ERROR`，不要看退出码**。要看退出码就用
+> `smoke_test_readers.py` / `smoke_test_offline_index.py` / `smoke_startup_lifecycle.py`
+> 这些正常返回 0 的脚本。
+> `scripts/smoke_test_window.py` 已修好（结尾改成 `os._exit` 跳过 Qt 收尾，退出码 0）。
 
 ---
 
@@ -332,6 +368,59 @@ $env:QT_QPA_PLATFORM = 'offscreen'
     现改为「**首次进入才加载**」（`_loaded_tabs` / `_offline_loaded` 守卫），刷新按钮与删除信号走 `force=True`。
     写"显示本地文件"的新页面时照此办理：**扫描结果要留驻，不要在 show / 切页里无条件重扫**。
 
+### 打包（冻结成 exe / 做安装器）时必踩的坑
+
+16. **PyInstaller + 非 ASCII 路径 → Qt 插件目录被损坏成 `?`**，构建直接失败：
+    `Qt plugin directory 'E:/????/PY??/????/.../PyQt5/Qt5/plugins' does not exist!`。
+    这正是本项目 `main.py` 一直在运行时绕过的问题，但**构建期绕不过去**。
+    解法：给源码目录建 ASCII 目录联接，**并且必须用该联接下的解释器重跑构建** ——
+    PyQt5 装在源码的 `.venv` 里，只把项目路径换成 ASCII 是不够的。见 §10。
+17. **`Qt5Charts.dll` 名字带 s**：Python 模块叫 `PyQt5.QtChart`，但 Qt 库文件是
+    `Qt5Charts.dll`。按 `Qt5Chart.dll` 去校验产物会得到假阴性，白折腾一轮。
+18. **Inno Pascal 的 `{ }` 注释不能嵌套**：注释以 `{` 开始、**遇到第一个 `}` 就结束**。
+    在注释里写 `{下载根}` 这类示例会让注释提前闭合，而且报错位置指向**下一行**，极具误导性。
+    实测连续踩了两次（第二次还是在"说明这条规则"的那行注释里踩的）。
+19. **自动恢复必须早于 `init_db()`**：`init_db()` 会先把 `ogc_users.db` 建出来，
+    「全新安装」判定立刻变假，恢复逻辑**永远不会触发**。main.py 的正确顺序是：
+    日志 → 单实例 → **工作区恢复** → crash_guard → **init_db** → 存储迁移 → 工作区同步。
+20. **静默卸载必须短路**：`unins000.exe /SILENT` 时 `[Code]` 里的 `MsgBox` 会卡住无人值守流程。
+    用 `if UninstallSilent then Exit;` 直接返回，只删程序本体、不询问不删数据。
+21. **改了源码要重建再验证**：踩过一次 —— 改完 `user_dir()` 没重建就跑端到端，
+    验证到的是**旧构建**的行为（数据落点不对），白排查一轮。顺序永远是：
+    改源码 → 重建 exe → 重编安装器 → 再验证。
+22. **模块级路径常量不能用 `__file__` 推导**（冻结模式的隐形杀手）：
+    `core/database.py` 的 `DB_PATH`/`AVATAR_DIR`、`ehviewer/db.py` 的 `DB_PATH`、
+    `ehviewer/ui/reader_window.py` 的 `PROGRESS_PATH` 都曾这么写。冻结后 `__file__`
+    指向 `_internal/`，于是账号库、头像、阅读进度全写进**安装目录** —— 装在
+    Program Files 就是"启动即失败"，装在用户可写目录则**侥幸能跑**，实测残留过
+    `_internal\data\ogc_users.db`。现在一律从 `CFG.data` 取（保持模块级变量名，
+    因为 `smoke_fresh_install.py` / `smoke_concurrency_guard.py` 会 monkeypatch `db.DB_PATH`）。
+    ⚠️ 这类常量在 **import 那一刻**就定死：在同一个进程里改 `sys.frozen` 再断言
+    **测不出来**（假阴性）。`smoke_storage_layout.py` 因此用**子进程探针**
+    （先伪造 `sys.frozen` 再 import），并已用变异测试确认它真能抓住旧写法。
+23. **冻结后 pywin32 由 PyInstaller 的 `pyimod04_pywin32` 兜底**：`qframelesswindow`
+    会 `import win32api`，而 `pywintypes.py` 在 `sys.frozen` 下改成"从 `sys.path` 找
+    `pywintypesNNN.dll`"。PyInstaller 在引导期把 `_internal/pywin32_system32` 塞进
+    `sys.path`、`os.add_dll_directory()` 与 `PATH`，所以产物必须含
+    `_internal/pywin32_system32/*.dll` + `_internal/win32/*.pyd`（已确认齐全）。
+    **不要**去"修" `pywintypes.py` 的冻结分支。自己写冻结探针时要手动补这一步，
+    否则会得到"假导入失败"，掩盖真实结论。
+24. **护栏测试必须做变异验证**：写完"应该能抓住某个 bug"的测试，就把代码临时改回旧写法
+    确认它**真的失败**，再改回来。上面第 22 条的子进程探针第一次写出来时，
+    断言是"不能落在安装目录下"—— 而子进程里 `__file__` 仍是真实源码路径，
+    旧写法算出来的是真实项目根，**照样通过**。断言改成"必须落在 `user_dir()` 下"才抓得住。
+25. **写 Qt 冒烟测试时：`QApplication` 必须留引用**。写成裸调用
+    `_qapp()` 丢弃返回值 → QApplication 立刻被 GC 回收 → 之后任何 QWidget 都以
+    `QWidget: Must construct a QApplication before a QWidget` **直接 abort**（不是抛异常，
+    是进程级 abort，退出码 `-1073740791`）。正确写法见
+    `scripts/smoke_ffmpeg_setup.py::_qapp`：模块级 `_APP` 全局持有。
+26. **`MaskDialogBase` 的 parent 不能是 None**：`qfluentwidgets` 的
+    `MaskDialogBase.__init__` 会做 `parent.width()` / `parent.height()`，
+    传 `None` 直接 `AttributeError`。弹窗入口要先解析出真实父控件
+    （页面 → 其所在窗口 → `QApplication.activeWindow()`），解析不到就**放弃弹窗并记日志**，
+    绝不能让"提示用户"这件事本身把页面搞崩（参考
+    `ui/widgets/ffmpeg_prompt.py::_need_dialog_parent`）。
+
 ---
 
 ## 8. 提交与安全纪律
@@ -362,3 +451,88 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 - [ ] 新的大体积产物走 `CFG.cache_path(...)`（不塞进 `data/`）；索引走 `CFG.data` / `CFG.offline_index_path(...)`
 - [ ] 显示本地文件的页面不在切页时重扫（首次加载 + 显式刷新，见 §7 第 15 条）
 - [ ] 暂存区无 `data/`、cookie、日志、媒体文件与本机绝对路径
+
+---
+
+## 10. 打包与分发（exe / 安装器 / 卸载）
+
+### 目录：源码与产物严格分开
+
+```
+..\OGC-OpenGenericClient\        源码，**不含任何构建产物**
+..\OGC-OpenGenericClient-exe\    构建工作区（不在版本控制内，见其 README-build.md）
+    packaging\                   OGC.spec · installer.iss · build_exe.py · 说明文本
+    build\  dist\                PyInstaller 中间产物 / 产物 + 安装器
+```
+
+`packaging/` 放在仓库外是用户的明确要求（避免产物与源码混淆）。
+代价是 **clone 出来的仓库不含构建配置** —— 若要恢复可复现构建，把 `packaging/`
+（几十 KB，无产物）挪回仓库即可。
+
+### 构建
+
+```powershell
+# exe（onedir）
+<源码>\.venv\Scripts\python.exe ..\OGC-OpenGenericClient-exe\packaging\build_exe.py
+# 安装器
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ..\OGC-OpenGenericClient-exe\packaging\installer.iss
+```
+
+工具链：PyInstaller 6.22.3（装在源码 `.venv`）、Inno Setup 6.7.3 +
+`Languages\ChineseSimplified.isl`（含非 ASCII 的 .iss 必须存成 **UTF-8 with BOM**）。
+实测体积：`dist/OGC` 222.6 MB → 安装器 86.9 MB。
+
+### 安装 / 卸载行为
+
+| 项 | 行为 |
+|---|---|
+| 安装范围 | 仅当前用户，默认 `%LOCALAPPDATA%\Programs\OGC-OpenGenericClient`，**不弹 UAC** |
+| 用户数据 | `%APPDATA%\OGC-OpenGenericClient`（由 `core/paths.user_dir()` 管理） |
+| 下载内容 | 用户自选下载根目录，**安装/卸载都不主动碰** |
+| 卸载 | 只删程序本体；依次询问「备份用户数据到下载根？」→「清理 `.cache`？」→「清空 `%APPDATA%` 数据？」 |
+| 静默卸载 | `/SILENT` 或 `/VERYSILENT` 时 `UninstallSilent` 短路，**只删程序本体**，不询问不删数据 |
+| 删除安全 | 目标不得是磁盘根目录，且必须含工作区标记（`.ogc-workspace.json`/`.ogc-portable`/`.cache`） |
+
+程序内入口：**设置 → 维护**（工作区状态 / 打开用户数据目录 / 卸载按钮）。
+「卸载」按钮**交互式**启动卸载器（不静默），让用户看到卸载器自己的询问；非安装副本时按钮隐藏。
+
+### 工作区标记（`core/workspace.py`）
+
+```
+{下载根}/.ogc-workspace.json      版本、时间、条目清单（重装时据此认出旧工作区）
+{下载根}/.ogc-portable/           运行期自动维护：索引 + **脱敏**配置，绝不含凭据
+{下载根}/.ogc-portable/userdata/  仅卸载时用户选择才写入：含账号库，重装可完整恢复
+```
+
+两层设计的安全边界：**程序自己默默干的不含凭据；含账号库的那份必须用户点头**。
+
+### 尚未验证 / 已知风险（接手时优先处理）
+
+- **代码签名**：未签名，用户双击会看到「Windows 已保护你的电脑」。
+  无法用技术绕过（自签名证书无效）；要么买证书，要么在发布说明里教用户点「仍要运行」。
+- **杀软误报**：PyInstaller 产物常见误报；已刻意不用 UPX 以降低概率，但未实测各杀软。
+- **真实交互式卸载未走通**：卸载时的 `MsgBox` 需要人工点击，自动化只验证了
+  **静默卸载**路径（程序删除 + 数据保留）。带备份的交互式流程需要手动点一遍。
+- **非 ASCII 安装路径未验证**：安装器默认目录是 ASCII，但用户可自选中文路径。
+  冻结后的 Qt 是否仍受该问题影响**未实测** —— 源码模式确认受影响（见 §7 第 8、16 条）。
+- **Playwright（抖音扫码登录）未打包**：它需要额外下载 Chromium（~150MB），
+  冻结后必然不可用，界面上会提示缺少 playwright。
+- **ffmpeg 不随包内置，改为「第一次真的需要时弹窗下载」**（用户明确要求）。
+  全项目只有一处用它：给本地视频抽第一帧当封面缩略图。完整构建实测 166 MB
+  （`avcodec-62.dll` 一个就 97.8 MB），内置会把安装包从 87 MB 抬到 140 MB+，
+  而收益只有一个缩略图。现在的链路：
+  `pages/folder_library_page.py::BatchThumbnailWorker.videos_skipped` 计数 →
+  `_maybe_prompt_ffmpeg()` → `ui/widgets/ffmpeg_prompt.py::maybe_prompt_ffmpeg()`
+  → 弹窗（**立即下载 / 手动指定 / 稍后** + 「我已知晓，下次不再显示」）
+  → `services/ffmpeg_installer.py` 下载到 `{下载根}/ffmpeg-download/`、自动解压、
+  绑定进配置 `ffmpeg_path`、打开所在文件夹。
+  `services/file_library.py::find_ffmpeg()` 的查找顺序是
+  **配置 `ffmpeg_path` → 内置资源 → `OGC_FFMPEG`/`FFMPEG` → 相对路径 → PATH**。
+  设置页入口在「工具依赖」组。回归测试：`scripts/smoke_ffmpeg_setup.py`。
+  ⚠️ 下载**刻意不做"证书校验失败就忽略"的降级** —— 那是要拿去执行的二进制，
+  不能给中间人开门；TLS 失败就如实报错，让用户走手动指定那条路。
+- **ffmpeg 一键下载未在本机实测走通**：本机 PATH 里已经有 ffmpeg，`find_ffmpeg()`
+  会直接命中，因此弹窗与下载分支不会被触发；自动化只覆盖到"不弹窗"和"解压/绑定"
+  这些可离线验证的部分。真实下载（约 40 MB）需要在一台没有 ffmpeg 的机器上点一遍。
+- **升级安装未实测**：`UsePreviousAppDir=yes` 应能覆盖安装并保留 `%APPDATA%` 数据，但没跑过。
+- **多用户**：数据在 `%APPDATA%`，每个 Windows 用户各有一套账号库（这是预期行为）。

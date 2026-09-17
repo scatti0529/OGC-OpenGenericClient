@@ -90,6 +90,65 @@
 - **动画警告过滤器**：静默动画目标已销毁等无害刷屏警告
 - **中文路径兼容**：`main.py` 在导入 Qt 前自动注入 `QT_QPA_PLATFORM_PLUGIN_PATH`，解决含中文路径时 PyQt5 找不到平台插件的问题
 
+## 💾 下载与安装（Windows 安装包）
+
+从 [Releases](https://github.com/scatti0529/OGC-OpenGenericClient/releases) 下载 `OGC-Setup-x.y.z.exe`，双击安装即可，**无需预先安装 Python**。
+
+安装向导与常见 Windows 软件一致：首屏是免责声明（同意后才能继续），随后可**自选安装位置**（默认 `%LOCALAPPDATA%\Programs\OGC-OpenGenericClient`，**仅当前用户、不弹 UAC**）、是否创建**桌面快捷方式**与开始菜单项。
+
+### 安装后数据放在哪
+
+刻意分成三处，卸载/升级都不会误删你的数据：
+
+| 内容 | 位置 | 说明 |
+|------|------|------|
+| 程序本体 | 安装目录（默认 `%LOCALAPPDATA%\Programs\OGC-OpenGenericClient`） | **卸载只删这里** |
+| 配置 / 索引 / 账号库 / 头像 / 日志 | `%APPDATA%\OGC-OpenGenericClient` | 每个 Windows 用户各一份 |
+| 下载的媒体内容 + `.cache` 缓存 | 你在设置里选的**下载根目录** | 安装、升级、卸载都不碰 |
+
+> ⚠️ 内置管理员账号为 `admin` / `11111111`，**首次启动请立即修改密码**。
+
+### 卸载
+
+程序内入口：**设置 →「维护」→「卸载」**；也可走 Windows「应用和功能」或开始菜单。
+
+卸载**只删除程序本体**，并依次询问：
+
+1. **是否把用户数据备份到下载根目录？** → 备份到 `{下载根目录}\.ogc-portable\userdata\`（含账号库；重装后自动还原）
+2. **是否清理下载根目录下的 `.cache` 缓存？** → 缓存可再生，清掉只影响缩略图重新生成
+3. **是否清空 `%APPDATA%\OGC-OpenGenericClient` 数据？** → 已备份时直接清；**未备份时会二次确认，默认「否」**
+
+用 `/SILENT` 或 `/VERYSILENT` 静默卸载时以上询问全部跳过，**只删程序本体、不询问也不删数据**。
+
+为防误删，删除类操作会校验目标**不是磁盘根目录**且**含工作区标记**（`.ogc-workspace.json` / `.ogc-portable` / `.cache`）。
+
+### 工作区标记：重装后自动认回旧数据
+
+程序会在下载根目录写入标记，并维护一份**脱敏**的可移植副本：
+
+```
+{下载根目录}/.ogc-workspace.json      标记：版本、时间、条目清单
+{下载根目录}/.ogc-portable/           索引 + 脱敏配置（绝不含 cookie / 密码）
+{下载根目录}/.ogc-portable/userdata/  仅在你选择备份时才写入（含账号库）
+```
+
+重装后如果把**同一个文件夹**选为下载根目录，程序会自动认出旧工作区并还原索引与配置；只有你明确备份过用户数据时，才会连账号库一起还原。
+
+> 自动同步的那份**永远不含任何凭据** —— 这条由回归测试逐字扫描下载目录守住（`scripts/smoke_workspace.py`）。
+
+### 已知限制
+
+- **未做代码签名**：首次运行 SmartScreen 会提示「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」即可。
+- **抖音扫码登录不可用**：依赖 Playwright 与额外下载的 Chromium（约 150 MB），未随包内置。
+- **ffmpeg 未随包内置**：它只用在一处 —— 给本地视频抽第一帧当**封面缩略图**。
+  没有它程序照常运行，只是视频显示不出封面。第一次真的遇到视频时程序会弹窗说明，
+  可以选择**一键下载**（下到你的下载根目录、自动解压并绑定路径），
+  也可以**手动指定**已装好的 `ffmpeg.exe`；入口同样在「设置 → 工具依赖」。
+  > 之所以不内置：完整构建 150~170 MB，会把安装包从 87 MB 抬到 140 MB 以上，
+  > 而收益只有一个缩略图。
+- **安装包约 90 MB**：大头是内置的完整 PyQt5 / Qt5 运行库。
+- 从源码构建（打自己的 exe / 安装包）见 [AGENTS.md](AGENTS.md) 第 10 节。
+
 ## 📦 环境要求
 
 - Python **3.10+**（开发环境为 3.12）
@@ -133,6 +192,7 @@ python main.py
 |----------|------|--------------|
 | `GALLERY_DL_TWITTER_DIR` | 推特备用解析所用的 gallery-dl 目录 | 本项目同级 `twitter/`、`gallery-dl/`，或本项目内 `twitter/` |
 | `DOUYINDL_SRC_DIR` | 抖音导入自检脚本所用的 `douyinDL-main/src` | 本项目同级 `../douyinDL-main/src` |
+| `OGC_FFMPEG` / `FFMPEG` | ffmpeg 可执行文件的完整路径（视频封面抽帧） | 内置资源 → 项目内 `ffmpeg/` → PATH；也可在设置里直接填 |
 
 ### 🗂️ 存储布局（缓存与数据分离）
 
@@ -146,6 +206,9 @@ python main.py
 
 下载根目录 = 设置里的「下载目录」，对应 `data/config.json` 的 `video_download_root`。
 **建议指向项目外的独立目录**（如 `D:\OGC下载`）：既能让程序目录保持精简，升级 / 重装也不影响已下载内容。
+
+> 📦 **如果用的是安装包**：上表的 `data/` 变成 `%APPDATA%\OGC-OpenGenericClient`（安装目录只读，不能写数据），
+> 缓存与下载内容的位置不变。详见上面的「[下载与安装](#-下载与安装windows-安装包)」。
 
 > **从旧版本升级**：首次启动会**自动迁移** —— 把 `data/` 里的大体积缓存搬到下载根目录的 `.cache/`，
 > 并把散落在下载目录里的索引 JSON（`.thumb_index.json`、`.dir_cache`、`.{平台}_offline_index.json`）
@@ -170,7 +233,7 @@ python main.py
 | 网页解析 | beautifulsoup4 |
 | 数据存储 | SQLite（内置 `sqlite3`） |
 | 邮件协议 | imaplib / smtplib / email（标准库） |
-| 媒体处理 | ffmpeg（音视频合并，可选） |
+| 媒体处理 | ffmpeg（**仅用于视频封面抽帧**，可选、默认不内置） |
 | 漫画下载 | jmcomic / pymupdf / pyzipper |
 | 抖音签名 | gmssl（A-Bogus / X-Bogus 生成） |
 | Pixiv | pixivpy3 |

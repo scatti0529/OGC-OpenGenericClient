@@ -22,7 +22,9 @@ from ..session import make_session
 from ..spiderinfo import (SpiderInfo, find_gallery_dir, page_file_name,
                          SUPPORTED_EXTS)
 
-PROGRESS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "ehentai", "reading_progress.json")
+# 阅读进度是**可写用户数据**：走 CFG.data（冻结时 = %APPDATA%），
+# 不能用 __file__ 推导 —— 那样在 exe 里会写到安装目录的 _internal/data/ 下。
+PROGRESS_PATH = os.path.join(str(CFG.data), 'ehentai', 'reading_progress.json')
 # 阅读临时缓存：阅读时下载的图片存这里，退出程序后清理。
 # 放下载根目录的 .cache/ 下（大体积、可再生），不占程序目录。
 READER_CACHE_DIR = CFG.cache_path("ehentai", "reader_cache")

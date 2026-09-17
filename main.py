@@ -17,7 +17,9 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 # ── Qt 平台插件路径修复（含中文/非 ASCII 路径时 PyQt5 的 QLibraryInfo 会损坏为 '?'，需在导入 Qt 前用原生 os.path 计算并注入）──
-if sys.platform == 'win32':
+# 冻结（PyInstaller）后不需要也不应该做这件事：插件由 PyInstaller 的 PyQt5 hook
+# 一并打进 _internal，Qt 会自己找到；照旧指向 .venv 反而会指向不存在的目录。
+if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
     site_packages = os.path.join(BASE_DIR, '.venv', 'Lib', 'site-packages')
     plugin_dir = os.path.join(site_packages, 'PyQt5', 'Qt5', 'plugins')
     if os.path.isdir(os.path.join(plugin_dir, 'platforms')):
@@ -31,6 +33,36 @@ logger.initialize(
     op_log_path=CFG['operation_log_path'],
     err_log_path=CFG['error_log_path']
 )
+
+# ── 单实例互斥（尽量早，避免白做一遍初始化）──
+# 两个用途：
+#   1) 安装器/卸载器用 Inno 的 AppMutex 检测"程序是否在运行" —— 没有它，
+#      卸载会在文件被占用时进行，留下半个程序；
+#   2) 两个实例同时写同一个 SQLite 库与 config.json 会互相覆盖。
+# 用原生 MessageBox 提示（此时 Qt 还没初始化）。系统调用失败一律放行启动。
+try:
+    from core import shell_integration as _shell
+    if not _shell.acquire_single_instance():
+        _shell.warn_already_running()
+        logger.info("检测到已有实例在运行，本次启动退出")
+        sys.exit(0)
+except SystemExit:
+    raise
+except Exception as _e:
+    logger.error(f"单实例检查失败（继续启动）: {_e}")
+
+# ── 工作区恢复：重装后把索引/配置/用户数据还原回来 ──
+# ⚠️ 必须在 init_db() **之前**！否则 init_db 会先把 ogc_users.db 建出来，
+#    is_fresh_install() 立刻变假，自动恢复永远不会触发（这个顺序坑踩过一次）。
+# 卸载时下载根目录是保留的，所以这里能凭 .ogc-workspace.json 认出旧工作区；
+# 若用户在卸载时选择了备份用户数据，连账号库一起还原（见 core/workspace.py）。
+try:
+    from core import workspace as _workspace
+    _restore = _workspace.maybe_restore()
+    if _restore.get('restored'):
+        logger.info(f"已从下载目录恢复工作区：{len(_restore['restored'])} 个文件")
+except Exception as e:
+    logger.error(f"工作区恢复失败（不影响启动）: {e}")
 
 # ── 安装全局崩溃兜底（必须尽早，且在任何 Qt 槽函数可能执行之前）──
 # 作用：1) PyQt5 槽函数里未捕获的异常默认会走 qFatal()→abort() 直接闪退且无日志，
@@ -72,6 +104,31 @@ try:
     logger.info("下载目录自检完成")
 except Exception as e:
     logger.error(f"下载目录自检失败: {str(e)}")
+
+# ── 工作区同步：维护可移植副本与标记 ──
+# 必须晚于存储迁移（索引那时才刚归位到 data/），放后台线程避免首次复制几 MB 卡启动。
+try:
+    from core import paths as _paths
+    logger.info(f"路径解析：{_paths.describe()}")
+except Exception:
+    pass
+try:
+    from core import workspace as _workspace
+    import threading as _threading
+    _threading.Thread(target=_workspace.sync_workspace, daemon=True,
+                      name='OGC-WorkspaceSync').start()
+except Exception as e:
+    logger.error(f"工作区同步启动失败（不影响启动）: {e}")
+
+# ── 注册表登记：把安装目录 / 卸载器路径 / 下载根目录写入 HKCU ──
+# 卸载器是独立编译的 exe，读不到本项目的 Python 代码，只能靠注册表知道
+# "下载根目录在哪"，才能在卸载时询问是否清理 .cache（见 packaging/installer.iss）。
+try:
+    from core import shell_integration as _shell
+    if _shell.register_paths():
+        logger.info("已登记安装信息到注册表（供卸载器使用）")
+except Exception as e:
+    logger.error(f"注册表登记失败（不影响使用）: {e}")
 
 # ── 加载全局玻璃效果配置 ──
 try:

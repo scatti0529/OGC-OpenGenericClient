@@ -41,6 +41,9 @@ CACHE_DIR_NAME = '.cache'
 # 离线索引（漫画/画廊扫描结果 JSON）在 data/ 下的子目录名
 INDEX_DIR_NAME = 'offline_index'
 
+# 用户可见的下载目录名（放在系统「下载」目录下）
+APP_NAME_FOLDER = 'OGC-OpenGenericClient'
+
 
 def _reload_from_disk(mgr) -> None:
     """按 mgr.cfg_file 重新读取配置（保留默认值补全）。
@@ -61,6 +64,27 @@ def _reload_from_disk(mgr) -> None:
     mgr.cfg = cfg
 
 
+def _default_download_root() -> str:
+    """首次运行的默认下载根目录。
+
+    刻意**不放在 data/（用户数据目录）里**：下载内容与 ``.cache`` 缓存动辄
+    几百 MB 到数 GB，塞进 AppData 会被漫游配置同步、拖慢登录，用户也找不到
+    自己下载的文件。实测踩过这个坑 —— 全新安装的 exe 把 ``douyin-download/``
+    与 ``.cache/`` 全写进了 ``AppData\\Roaming``。
+
+    优先用系统「下载」目录（中英文两种命名都试），都不存在则退回家目录。
+    """
+    home = Path(os.path.expanduser('~'))
+    for name in ('Downloads', '下载'):
+        cand = home / name
+        try:
+            if cand.is_dir():
+                return str(cand / APP_NAME_FOLDER)
+        except OSError:
+            pass
+    return str(home / APP_NAME_FOLDER)
+
+
 class ConfigManager:
     """JSON 配置管理器（单例）"""
 
@@ -79,18 +103,24 @@ class ConfigManager:
         # 用可重入锁串行化"改值 + 落盘"，避免并发写坏文件。
         self._lock = threading.RLock()
 
-        self.root = Path(sys.argv[0]).parent
-        self.data = self.root / 'data'
-        self.music_dir = self.root / 'music'
-        self.logs_dir = self.root / 'logs'
+        # 路径分三类（详见 core/paths.py）：
+        #   resource/ 只读随包资源   program_dir  root（兼容历史语义）
+        #   USER_DIR  可写用户数据   —— 冻结后落 %APPDATA%，绝不能写进安装目录
+        # 源码模式下这些解析结果与历史版本**完全一致**（root=sys.argv[0] 父目录，
+        # data=<root>/data），所以开发与冒烟测试行为不变。
+        from core import paths as _paths
+
+        self.root = _paths.program_dir()
+        self.data = _paths.user_dir()
+        self.music_dir = _paths.user_music_dir()
+        self.logs_dir = _paths.user_log_dir()
         self.cfg_file = self.data / 'config.json'
 
         # download_root 的解析结果缓存（配置变更时失效，见 __setitem__）
         self._download_root_cache = None
 
-        # 创建必要的目录
-        for d in (self.data, self.logs_dir, self.music_dir):
-            d.mkdir(parents=True, exist_ok=True)
+        # 创建必要的目录（冻结模式下会建 %APPDATA% 下的那一套）
+        _paths.ensure_user_dirs()
 
         # 默认配置
         self.default = {
@@ -110,8 +140,13 @@ class ConfigManager:
             # 日志路径配置
             'operation_log_path': str(self.logs_dir / 'operation.log'),
             'error_log_path': str(self.logs_dir / 'error.log'),
-            # 视频/多媒体下载根目录（默认 data 文件夹，可在设置中修改）
-            'video_download_root': str(self.data),
+            # 视频/多媒体下载根目录。
+            # ⚠️ 默认值**不能**是 data/（用户数据目录）：下载内容与 .cache 缓存
+            # 动辄几百 MB 到数 GB，塞进 %LOCALAPPDATA% 既拖慢系统又让用户找不到。
+            # 实测过这个坑：全新安装的 exe 把 douyin-download/ 和 .cache/ 全写进了
+            # AppData\Roaming。现在默认给用户自己的「下载」目录，可见、可清理、
+            # 且通常在大容量分区上。
+            'video_download_root': _default_download_root(),
             # 兼容旧配置键（旧代码 video_page/settings_page 仍会引用，保持向后兼容）
             'video_save_path': str(self.data / 'videos'),
             'temp_video_save_path': str(self.data / 'temp_videos'),
@@ -126,6 +161,18 @@ class ConfigManager:
             'auto_login_enabled': False,
             'auto_login_selected': '',
             'auto_login_accounts': [],
+            # ── ffmpeg（可选外部依赖）──
+            # 全项目只有一处用它：给本地视频抽第一帧当封面缩略图
+            # （services/file_library.py::_extract_video_frame）。
+            # 没有它**不崩**，只是视频显示不出封面，所以**不随包内置**：
+            # 完整构建 150~170 MB，会让安装包从 87 MB 涨到 140 MB+，
+            # 而这功能只影响一个缩略图。
+            # 改为「第一次真的需要时弹窗询问」——用户可以一键下载，也可以
+            # 自己在设置里填路径（两种方式都写进下面这个键）。
+            'ffmpeg_path': '',
+            # 弹窗里的「我已知晓，下次不再显示」：勾上并确认后置 True，
+            # 之后不再打扰（`find_ffmpeg()` 仍会继续尝试自动查找）。
+            'ffmpeg_prompt_dismissed': False,
         }
 
         # 加载配置（兼容旧路径缺失的默认值补全）

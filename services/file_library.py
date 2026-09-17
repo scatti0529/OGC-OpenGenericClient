@@ -472,13 +472,95 @@ def get_image_thumbnail(path: str, size: tuple = COVER_SIZE) -> str:
     return path
 
 
+# ── ffmpeg 定位 ──
+_FFMPEG_CACHE = None
+
+
+def find_ffmpeg() -> str:
+    """定位 ffmpeg 可执行文件，找不到返回空串。
+
+    本项目只有**一处**用 ffmpeg：给视频提取封面缩略图（见下方
+    ``_extract_video_frame``）。没有 ffmpeg 时应优雅降级为"该视频没有封面"，
+    **绝不能**因此让整个文件库打不开。
+
+    查找顺序遵循本项目「外置依赖」约定（显式配置 → 内置资源 → 环境变量 →
+    相对路径 → PATH）：
+
+      0. **配置项 ``ffmpeg_path``**（设置页里手填，或"一键下载"后自动绑定）
+         —— 显式指定永远优先，否则用户手填了却被内置版本盖过去，会以为没生效。
+      1. 随包内置：``<资源根>/ffmpeg/ffmpeg.exe``（当前发布版**未内置**，留着以备将来）
+      2. 环境变量 ``OGC_FFMPEG`` / ``FFMPEG``（显式指定优先于 PATH）
+      3. 源码/部署的常见位置：``<项目根>/ffmpeg/``、``<项目根>/tools/ffmpeg/bin/``
+      4. 项目同级目录 ``../ffmpeg/bin/ffmpeg.exe``（历史部署习惯）
+      5. 系统 PATH（用户自己装过）
+
+    结果缓存：缩略图循环里会高频调用，不做缓存会反复 stat。
+    改了配置或下载完成后调用 ``reset_ffmpeg_cache()`` 让下次重新探测。
+    """
+    global _FFMPEG_CACHE
+    if _FFMPEG_CACHE is not None:
+        return _FFMPEG_CACHE
+
+    cands = []
+    # ① 用户显式配置（设置页 / 一键下载写入）
+    try:
+        from core.config import config as _CFG
+        configured = str(_CFG.get('ffmpeg_path', '') or '').strip()
+        if configured:
+            cands.append(configured)
+    except Exception:
+        pass
+    # ② 随包内置与常见相对位置
+    try:
+        from core import paths as _paths
+        p = _paths.bundled_ffmpeg()
+        if p:
+            cands.append(p)
+        root = _paths.resource_root()
+        cands += [
+            str(root / 'ffmpeg' / 'bin' / 'ffmpeg.exe'),
+            str(root / 'tools' / 'ffmpeg' / 'bin' / 'ffmpeg.exe'),
+            str(root.parent / 'ffmpeg' / 'bin' / 'ffmpeg.exe'),
+        ]
+    except Exception:
+        pass
+    # ③ 环境变量
+    for env in ('OGC_FFMPEG', 'FFMPEG'):
+        v = os.environ.get(env)
+        if v:
+            cands.append(v)
+
+    found = ''
+    for c in cands:
+        try:
+            if c and os.path.isfile(c):
+                found = c
+                break
+        except OSError:
+            pass
+    if not found:
+        try:
+            import shutil as _sh
+            found = _sh.which('ffmpeg') or ''
+        except Exception:
+            found = ''
+    _FFMPEG_CACHE = found
+    return found
+
+
+def reset_ffmpeg_cache():
+    """让下次 ``find_ffmpeg()`` 重新探测（改了路径配置 / 下载安装完成后调用）。"""
+    global _FFMPEG_CACHE
+    _FFMPEG_CACHE = None
+
+
 def _extract_video_frame(path: str) -> str:
     """用 ffmpeg 提取第一帧到临时图片（按源文件哈希独立命名，避免并发冲突）"""
     try:
         import shutil
         import subprocess
         import hashlib
-        ffmpeg = shutil.which('ffmpeg')
+        ffmpeg = find_ffmpeg()
         if not ffmpeg:
             return ''
         digest = hashlib.md5(os.path.abspath(path).encode('utf-8')).hexdigest()[:24]
@@ -550,7 +632,20 @@ def get_video_cover(path: str) -> str:
 
 # ── 7z 解压 ──
 def get_7z_path() -> str:
-    """获取项目内置 7z.exe 路径"""
+    """内置 7z.exe 的路径。
+
+    ⚠️ 必须走 ``core.paths.bundled_7z()``，不能拼 ``CFG.root/data/7Z``：
+    ``data/7Z`` 是**随程序分发的只读资产**，但 data/ 在冻结后变成了可写的
+    %APPDATA% —— 照旧拼路径会指向一个根本没有 7z.exe 的目录。
+    """
+    try:
+        from core import paths as _paths
+        p = _paths.bundled_7z()
+        if p:
+            return p
+    except Exception:
+        pass
+    # 兜底：源码模式下 data/7Z 就在程序目录里
     return os.path.join(str(CFG.root), 'data', '7Z', '7z.exe')
 
 

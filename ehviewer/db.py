@@ -14,7 +14,15 @@ import time
 from . import constants as C
 from .models import GalleryInfo
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app_db.db")
+# 默认数据库位置。运行时通常会被 OGC 通过 set_db_path() 指到
+# CFG.data/ehentai/app_db.db（见 pages/album/ehentai_settings.py 的 KEY_DB_PATH）。
+# 这里只作为**独立使用 ehviewer 时的兜底** —— 但兜底也必须落在可写目录：
+# 冻结后 __file__ 在 _internal/ 里，按它推导会把库写进安装目录。
+try:
+    from core.config import config as _CFG
+    DB_PATH = os.path.join(str(_CFG.data), 'ehentai', 'app_db.db')
+except Exception:      # core 不可导入（ehviewer 被单独拿去用时）
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_db.db')
 DB_DIR = os.path.dirname(DB_PATH)
 
 # OGC 集成：允许在运行时把数据库指向与 E-Hentai 模块同一份 app_db.db（共享数据库）。
