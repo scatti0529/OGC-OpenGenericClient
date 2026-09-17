@@ -366,7 +366,7 @@ class SettingsPage(QWidget):
 
         self.cache_btn = PushButton("清理图片缓存", self)
         self.cache_btn.clicked.connect(self._clear_cache)
-        lay.addLayout(_row("缓存", self.cache_btn, "清理缩略图与阅读图片缓存（data/ehentai/cache）"))
+        lay.addLayout(_row("缓存", self.cache_btn, "清理缩略图与阅读图片缓存（下载根目录/.cache）"))
 
         ver = CaptionLabel("EhViewer PC %s — 基于 Ehviewer_CN_SXJ 源码复刻，仅用于学习交流，与 E-Hentai.org 无任何关系。" % C.APP_VERSION)
         ver.setWordWrap(True)
@@ -376,9 +376,13 @@ class SettingsPage(QWidget):
 
     def _clear_cache(self):
         import shutil
-        cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "ehentai", "cache")
+        # 与 ehviewer.image_cache.CACHE_DIR 共用同一路径，避免「清理」清的是别的目录
         try:
-            if os.path.exists(cache_dir):
+            from ehviewer.image_cache import CACHE_DIR as cache_dir
+        except Exception:
+            cache_dir = ''
+        try:
+            if cache_dir and os.path.exists(cache_dir):
                 shutil.rmtree(cache_dir, ignore_errors=True)
             InfoBar.success("", "图片缓存已清理", position=InfoBarPosition.TOP, duration=2000, parent=self)
         except Exception as e:

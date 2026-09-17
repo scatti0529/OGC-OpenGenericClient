@@ -52,6 +52,19 @@ except Exception as e:
     logger.error(f"数据库初始化失败: {str(e)}", exc_info=True)
     sys.exit(1)
 
+# ── 存储布局迁移（一次性、幂等）──
+# 把历史上的大体积缓存（缩略图 / 画廊图片 / 预览图）从 data/ 搬到下载根目录的
+# .cache/，并把散落在下载根目录里的索引 JSON（缩略图索引 / 目录索引 / 离线索引）
+# 收回 data/。必须早于任何缓存读取，否则会先按新路径读空、把缓存当成未命中重算。
+# 同盘移动走 os.rename，是瞬时的；跨盘才会真正复制（仅一次），失败也绝不影响启动。
+try:
+    from core import storage_migration
+    if storage_migration.needs_migration():
+        logger.info("检测到旧存储布局，开始一次性迁移（缓存 → 下载根目录，索引 → data/）")
+        storage_migration.migrate()
+except Exception as e:
+    logger.error(f"存储布局迁移失败（不影响启动）: {e}")
+
 # ── 自检下载目录结构 ──
 try:
     from services.download_manager import ensure_download_dirs

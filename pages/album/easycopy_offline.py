@@ -283,7 +283,13 @@ def _easycopy_index_path() -> str:
         from services.comic_library import default_index_path
         return default_index_path(_easycopy_root(), 'easycopy')
     except Exception:
-        return 'data/.easycopy_offline_index.json'
+        # 兜底也必须与 default_index_path 的新位置一致（data/offline_index/），
+        # 否则索引会写回下载根目录、与迁移后的布局打架。
+        try:
+            from core.config import config as CFG
+            return CFG.offline_index_path('easycopy')
+        except Exception:
+            return os.path.join('data', 'offline_index', 'easycopy_offline_index.json')
 
 
 def _dummy_config():

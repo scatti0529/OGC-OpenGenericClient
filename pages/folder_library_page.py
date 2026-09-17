@@ -125,7 +125,10 @@ class BatchThumbnailWorker(QThread):
         items = []
         try:
             for dirpath, dirnames, filenames in os.walk(self.root):
-                dirnames[:] = [d for d in dirnames if d not in ('thumb_cache', 'dir_cache')]
+                # 排除所有缓存目录：旧命名 thumb_cache/dir_cache + 新命名 .cache/.thumbs。
+                # 缓存现在位于下载根目录下，必须在这里挡掉，否则会被当成用户内容批量生成缩略图。
+                dirnames[:] = [d for d in dirnames
+                               if d not in ('thumb_cache', 'dir_cache', '.cache', '.thumbs')]
                 for name in filenames:
                     ext = os.path.splitext(name)[1].lower()
                     if FL.classify_ext(ext) in ('image', 'video', 'audio'):

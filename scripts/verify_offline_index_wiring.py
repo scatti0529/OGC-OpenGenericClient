@@ -24,7 +24,9 @@ svc = JMComicService()
 p = JMComicReaderPage(svc)
 print("[info] JM root:", p.offline_tab.scan_root)
 print("[info] JM index:", p.offline_tab.index_path)
-assert p.offline_tab.index_path.endswith('.jmcomic_offline_index.json')
+# 索引已统一收进 data/offline_index/（旧位置是下载根目录下的 .jmcomic_offline_index.json）
+assert p.offline_tab.index_path.endswith('jmcomic_offline_index.json')
+assert os.path.join('data', 'offline_index') in p.offline_tab.index_path.replace('/', os.sep)
 print("[OK] JMComic 离线页索引接线")
 
 # 2. E-Hentai
@@ -33,7 +35,8 @@ from pages.album.ehentai_reader import EhentaiReaderPage
 eh = EhentaiReaderPage()
 print("[info] EH root:", eh.offline_tab.scan_root)
 print("[info] EH index:", eh.offline_tab.index_path)
-assert eh.offline_tab.index_path.endswith('.ehentai_offline_index.json')
+assert eh.offline_tab.index_path.endswith('ehentai_offline_index.json')
+assert os.path.join('data', 'offline_index') in eh.offline_tab.index_path.replace('/', os.sep)
 print("[OK] E-Hentai 离线页索引接线")
 
 # 3. EasyCopy

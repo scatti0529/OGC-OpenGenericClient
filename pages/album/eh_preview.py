@@ -2,8 +2,8 @@
 """详情页预览缩略图：用下载画廊的下载逻辑解析漫画，下载前若干页，
 缩小为缩略图并缓存到专门文件夹（与画廊封面完全分离）。
 
-目录：data/ehentai/previews/{gid}/000001.jpg ...（缩略图）
-封面统一走 pages.album.eh_cover（data/ehentai/cache/covers/{gid}.img），两者互不影响。
+目录：{下载根}/.cache/ehentai/previews/{gid}/000001.jpg ...（缩略图）
+封面统一走 pages.album.eh_cover（{下载根}/.cache/ehentai/cache/covers/{gid}.img），两者互不影响。
 
 预览图获取（新版 GdtPreviewWorker）：
     直接抓画廊 HTML（如 https://e-hentai.org/g/{gid}/{token}/），解析其中
@@ -22,7 +22,7 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from core.config import config as CFG
 
-PREVIEW_DIR = str(CFG.data / 'ehentai' / 'previews')
+PREVIEW_DIR = CFG.cache_path('ehentai', 'previews')
 
 
 def preview_dir(gid):

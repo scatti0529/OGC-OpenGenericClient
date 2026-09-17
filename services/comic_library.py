@@ -123,12 +123,21 @@ class LocalComic:
 #  离线索引 JSON
 # ═══════════════════════════════════════════
 def default_index_path(root: str, platform: str) -> str:
-    """生成默认索引文件路径（放在下载根目录同级 .index 隐藏文件）。
+    """离线索引文件路径（统一放在 ``data/offline_index/`` 内，与下载内容分离）。
 
-    例如：{下载根}/easycopy-download/.index.json
+    历史：这些索引原先是 ``{下载根}/.{platform}_offline_index.json``，藏在用户的
+    下载目录里 —— 索引属于"小体积、不可再生"的数据，必须跟 data/ 走；换下载盘或
+    清理下载目录时不该连带把索引弄丢。
+
+    ``root`` 参数保留是为了兼容既有调用点（索引不再由它推导位置）。
     """
-    base = os.path.dirname(os.path.abspath(root))
-    return os.path.join(base, f'.{platform}_offline_index.json')
+    try:
+        from core.config import config as CFG
+        return CFG.offline_index_path(platform)
+    except Exception:
+        # 极端情况下（core 不可导入）退回旧位置，保证功能不中断
+        base = os.path.dirname(os.path.abspath(root))
+        return os.path.join(base, f'.{platform}_offline_index.json')
 
 
 def load_index(index_path: str, root: str, max_age: int = INDEX_MAX_AGE):

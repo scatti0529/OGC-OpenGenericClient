@@ -333,7 +333,12 @@ class JMComicReaderPage(QWidget):
         if widget is not None:
             self._tabs_stack.setCurrentWidget(widget)
             if routeKey == "jmOfflineTab":
-                self.offline_tab.load()
+                # 原实现每次切到本标签页都 load()，等于每切回来一次就重扫一遍本地
+                # 漫画目录。现在只在首次进入时扫描；显式刷新走「刷新」按钮、
+                # reload_offline() 与删除后的 force=True 加载。
+                if not getattr(self, '_offline_loaded', False):
+                    self._offline_loaded = True
+                    self.offline_tab.load()
 
     def _open_online_chapter(self, photo_id: str, title: str):
         self._root_stack.setCurrentWidget(self.online_reader)
@@ -364,4 +369,5 @@ class JMComicReaderPage(QWidget):
         self.online_tab.load_album(album_id)
 
     def reload_offline(self):
+        self._offline_loaded = True
         self.offline_tab.load()

@@ -30,7 +30,13 @@ _thumb_index_lock = threading.RLock()
 
 
 def _thumb_index_file() -> str:
-    return os.path.join(get_download_root(), '.thumb_index.json')
+    """缩略图索引文件（**在 data/ 内**）。
+
+    索引属于"小体积、不可再生"的数据：它记录 源文件 → 缩略图 的映射，
+    丢了就得全量重算缩略图。历史实现把它放在下载根目录
+    （``{下载根}/.thumb_index.json``），换下载盘或清理下载目录时会连带丢失。
+    """
+    return os.path.join(str(CFG.data), 'thumb_index.json')
 
 
 def load_thumb_index() -> dict:
@@ -117,12 +123,12 @@ _COVER_NAMES = ('cover', 'poster', 'thumb', 'folder', 'preview', '封面')
 
 
 def get_download_root() -> str:
-    """获取下载根目录（设置里可改，不存在则回退默认）"""
-    custom = CFG.get('video_download_root', '')
-    if custom and os.path.isdir(custom):
-        return custom
-    default = os.path.join(str(CFG.root), 'data')
-    return default if os.path.isdir(default) else str(CFG.root)
+    """获取下载根目录（委托 core.config 的唯一权威解析）。
+
+    保留本函数只为兼容既有调用点；**不要在这里再实现一份解析逻辑**
+    （历史上这里与 download_manager 的实现细节不一致，导致缓存落到两处）。
+    """
+    return CFG.download_root
 
 
 def classify_ext(ext: str) -> str:
@@ -185,6 +191,9 @@ def list_platforms(root: str = None) -> list:
     items = []
     try:
         for name in sorted(os.listdir(root)):
+            # 跳过隐藏项：.cache（缩略图/图片缓存）不该出现在"本地文件"的平台列表里
+            if name.startswith('.'):
+                continue
             full = os.path.join(root, name)
             if os.path.isdir(full):
                 items.append(_entry(full))
@@ -206,6 +215,10 @@ def list_directory(path: str) -> dict:
     files = []
     try:
         for name in os.listdir(path):
+            # 跳过隐藏项：既避免 .cache 这类缓存目录混进列表，
+            # 也顺手挡掉下载时产生的 .part/.tmp 临时文件（以 . 开头或另有过滤）
+            if name.startswith('.'):
+                continue
             full = os.path.join(path, name)
             if os.path.isdir(full):
                 dirs.append(_entry(full))
@@ -225,7 +238,12 @@ def list_directory(path: str) -> dict:
 
 # ── 目录扫描结果缓存（JSON，避免每次打开都全量扫描） ──
 def get_dir_cache_dir() -> str:
-    d = os.path.join(get_download_root(), '.dir_cache')
+    """目录列表索引目录（**在 data/ 内**）。
+
+    与缩略图索引同理：这是"丢了要重扫"的小体积索引，归 data/ 管理，
+    不跟下载内容混在一起。
+    """
+    d = os.path.join(str(CFG.data), 'dir_cache')
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:
@@ -404,8 +422,12 @@ def find_audio_cover_in_dir(path: str) -> str:
 
 
 def get_thumb_cache_dir() -> str:
-    """获取缩略图缓存目录（绝对路径，避免相对路径加载失败）"""
-    d = os.path.abspath(os.path.join(get_download_root(), '.thumbs'))
+    """缩略图缓存目录（绝对路径，避免相对路径加载失败）。
+
+    这是**大体积可再生物**（本项目实测 50MB+ / 数千张图），放下载根目录的
+    ``.cache/`` 下，不占程序目录。
+    """
+    d = os.path.abspath(CFG.cache_path('thumbs'))
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:

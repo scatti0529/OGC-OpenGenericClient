@@ -117,7 +117,10 @@ comic_page = OfflineComicPage()
 assert comic_page is not None
 reader_page = OfflineReaderPage()
 reader_page.load_chapter(by_title["画廊A"], by_title["画廊A"].chapters[0])
-reader_page.reader.set_mode(VIEW_PAGE)
+# 注：旧断言写的是 reader_page.reader.set_mode(VIEW_PAGE)，早已失效 ——
+# OfflineReaderPage 的属性名是 _reader（ReaderWindow），并没有 set_mode；
+# 模式切换已由第 2 节的 ComicReaderPage 用例充分覆盖，这里改为验证章节确实被载入。
+assert reader_page._reader is not None, "离线阅读器未构建阅读窗口"
 print("[OK] 通用离线阅读组件实例化 + 本地章节加载")
 
 # 4. JMComic 目录规则（单章省略章节层）
@@ -169,6 +172,33 @@ from pages.album.easycopy_page import EasyCopyPage
 page = EasyCopyPage()
 assert 'easycopyOfflineTab' in page.pivot.items
 print("[OK] EasyCopyPage 6 标签页实例化")
+
+# 5.1 切页不重载：同一标签页第二次进入不应再触发 load()
+#     （用户反馈：本地文件列表第一次加载后，切走再切回又要重新等一遍）
+page._loaded_tabs = set()
+calls = []
+page.offline_page.load = lambda *a, **k: calls.append('offline')
+page.home_page.load = lambda *a, **k: calls.append('home')
+page._refresh_current_tab(page.TAB_OFFLINE)
+page._refresh_current_tab(page.TAB_HOME)
+page._refresh_current_tab(page.TAB_OFFLINE)          # 第二次进入离线页：应被跳过
+assert calls == ['offline', 'home'], f"切页仍重复加载: {calls}"
+page._refresh_current_tab(page.TAB_OFFLINE, force=True)   # 显式刷新仍须生效
+assert calls == ['offline', 'home', 'offline'], f"显式刷新失效: {calls}"
+print("[OK] EasyCopyPage 切页只加载一次；显式刷新仍生效")
+
+for label, reader_page, route in (("E-Hentai", eh_reader, "ehOfflineTab"),
+                                  ("JMComic", jm_reader, "jmOfflineTab")):
+    reader_page._offline_loaded = False       # 消除构造期副作用，保证判定确定
+    loads = []
+    reader_page.offline_tab.load = lambda *a, **k: loads.append(1)
+    reader_page._on_pivot_changed(route)
+    reader_page._on_pivot_changed(route)
+    reader_page._on_pivot_changed(route)
+    assert len(loads) == 1, f"{label} 离线标签被重复扫描 {len(loads)} 次（应为 1 次）"
+    reader_page.reload_offline()              # 显式刷新仍应生效
+    assert len(loads) == 2, f"{label} reload_offline 未触发加载"
+print("[OK] E-Hentai / JMComic 离线标签只扫描一次；reload_offline 仍生效")
 
 # 6. main_window 集成
 import ui.main_window as mw

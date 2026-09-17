@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLa
 from qfluentwidgets import (ToolButton, FluentIcon, StrongBodyLabel, CaptionLabel,
                             ComboBox, PushButton)
 
+from core.config import config as CFG
+
 from .. import urls
 from ..config import get
 from ..session import make_session
@@ -21,8 +23,9 @@ from ..spiderinfo import (SpiderInfo, find_gallery_dir, page_file_name,
                          SUPPORTED_EXTS)
 
 PROGRESS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "ehentai", "reading_progress.json")
-# 阅读临时缓存：阅读时下载的图片存这里，退出程序后清理
-READER_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "ehentai", "reader_cache")
+# 阅读临时缓存：阅读时下载的图片存这里，退出程序后清理。
+# 放下载根目录的 .cache/ 下（大体积、可再生），不占程序目录。
+READER_CACHE_DIR = CFG.cache_path("ehentai", "reader_cache")
 
 
 def _reader_cache_path(gid, index):

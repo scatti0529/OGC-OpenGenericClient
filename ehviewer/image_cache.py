@@ -7,10 +7,15 @@ import threading
 from PyQt5.QtCore import QObject, QThreadPool, QRunnable, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap, QImageReader
 
+from core.config import config as CFG
+
 from . import urls
 from .config import get
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ehentai", "cache")
+# 画廊图片磁盘缓存。放在**下载根目录**的 .cache/ 下而不是 data/：
+# 这里动辄几百 MB（本项目实测 400MB+），留在程序目录会把项目撑大。
+# 路径由 core.config 统一解析，见其模块 docstring 的"目录职责划分"。
+CACHE_DIR = CFG.cache_path("ehentai", "cache")
 MAX_DISK_CACHE = 800 * 1024 * 1024
 _lock = threading.Lock()
 _sizes = None

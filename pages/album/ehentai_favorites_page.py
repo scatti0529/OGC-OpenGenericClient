@@ -159,9 +159,11 @@ class ThumbnailLoader(QObject):
         self._cache = {}                  # gid -> QPixmap
         self._pending = {}                # gid -> ThumbnailFetchThread
         self._proxy = ''
-        # 封面磁盘缓存：下载一次后缓存到 data/ehentai/cache/covers，后续直接读本地
+        # 封面磁盘缓存：下载一次后缓存到 {下载根}/.cache/ehentai/cache/covers，后续直接读本地。
+        # 必须与 eh_cover.COVER_DIR 指向同一处（否则同一张封面会被缓存两份，而且写回 data/
+        # 会让迁移后的 data/ 重新变胖）。
         try:
-            self._cover_dir = str(CFG.data / 'ehentai' / 'cache' / 'covers')
+            self._cover_dir = CFG.cache_path('ehentai', 'cache', 'covers')
             os.makedirs(self._cover_dir, exist_ok=True)
         except Exception:
             self._cover_dir = ''

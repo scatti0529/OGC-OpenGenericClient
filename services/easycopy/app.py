@@ -28,7 +28,11 @@ from .parser import ParseException, SiteHtmlParser
 
 
 def default_data_dir() -> str:
-    """用户数据目录：优先使用 OGC 的 data/easycopy 文件夹。"""
+    """用户数据目录：优先使用 OGC 的 data/easycopy 文件夹。
+
+    这里只放**配置**（settings.json）。图片缓存是几百 MB 的可再生物，
+    单独走 ``default_cache_dir()`` 去下载根目录，别混进 data/。
+    """
     try:
         from core.config import config as CFG
         path = os.path.join(CFG.data, 'easycopy')
@@ -37,6 +41,18 @@ def default_data_dir() -> str:
         path = os.path.join(base, "EasyCopy")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def default_cache_dir() -> str:
+    """图片缓存目录：下载根目录下的 .cache/easycopy/images。"""
+    try:
+        from core.config import config as CFG
+        return CFG.cache_path('easycopy', 'images')
+    except Exception:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        path = os.path.join(base, "EasyCopy", "images")
+        os.makedirs(path, exist_ok=True)
+        return path
 
 
 class _PageLoadBridge(QObject):
@@ -62,7 +78,8 @@ class AppContext:
         self.api = SiteApiClient(self.http, self.session)
         self.parser = SiteHtmlParser(resolve_href=self._resolve_href)
 
-        self.image_cache = ImageCache(os.path.join(self.data_dir, "images"))
+        # 配置留在 data/easycopy/，图片缓存去下载根目录的 .cache/（见模块上方说明）
+        self.image_cache = ImageCache(default_cache_dir())
         self.image_fetcher = ImageFetcher(self.image_cache)
 
         self._page_cache: dict[str, object] = {}

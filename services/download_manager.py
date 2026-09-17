@@ -140,11 +140,15 @@ SUBDIRS = ('images', 'videos', 'audios', 'sourcefiles')
 
 
 def get_download_root() -> str:
-    """获取下载根目录（默认 data 文件夹或设置中配置）"""
-    custom = CFG.get('video_download_root', '')
-    if custom and os.path.isdir(custom):
-        return custom
-    return os.path.join(CFG.root, 'data')
+    """获取下载根目录（委托给全局配置的唯一权威解析）。
+
+    这里**不再自己实现一遍**「配置 → 回退」逻辑：过去 download_manager 与
+    file_library 各有一份、细节还不一致（一个无条件回退 ``data/``，另一个在
+    ``data/`` 不存在时回退项目根），同一次运行里两处可能算出不同的根目录，
+    把缓存写到两个地方。现在统一由 ``core.config.ConfigManager.download_root``
+    解析，且"配置了就建目录"，不再因目录尚未存在而静默回退。
+    """
+    return CFG.download_root
 
 
 def ensure_download_dirs():

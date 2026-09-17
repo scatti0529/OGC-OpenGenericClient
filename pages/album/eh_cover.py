@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-"""统一封面缓存服务（按 gid，data/ehentai/cache/covers/{gid}.img）。
+"""统一封面缓存服务（按 gid，{下载根}/.cache/ehentai/cache/covers/{gid}.img）。
 
 所有页面（我的收藏 / 详情 / 历史 / 主页 / 搜索 / 排行榜）共用同一张封面：
 - 收藏漫画时 enqueue 下载封面入本地缓存（并显示下载进度）。
 - 已缓存则该漫画各处直接用缓存，不重复下载。
 - 线程池并发下载，避免阻塞 UI。
+
+注意缓存**不在 data/ 里**：封面图属于大体积可再生物，统一放下载根目录的
+.cache/ 下，避免程序目录被撑大（见 core.config 模块开头的目录职责划分）。
 """
 import os
 
@@ -13,7 +16,7 @@ from PyQt5.QtGui import QPixmap
 
 from core.config import config as CFG
 
-COVER_DIR = str(CFG.data / 'ehentai' / 'cache' / 'covers')
+COVER_DIR = CFG.cache_path('ehentai', 'cache', 'covers')
 
 
 class _CoverWorker(QThread):

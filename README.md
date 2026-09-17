@@ -134,6 +134,32 @@ python main.py
 | `GALLERY_DL_TWITTER_DIR` | 推特备用解析所用的 gallery-dl 目录 | 本项目同级 `twitter/`、`gallery-dl/`，或本项目内 `twitter/` |
 | `DOUYINDL_SRC_DIR` | 抖音导入自检脚本所用的 `douyinDL-main/src` | 本项目同级 `../douyinDL-main/src` |
 
+### 🗂️ 存储布局（缓存与数据分离）
+
+程序把"数据"刻意分成两类，避免几百 MB 缓存把项目目录撑大：
+
+| 位置 | 放什么 | 性质 |
+|------|--------|------|
+| `data/` | 索引 JSON、配置、数据库、`7Z/`、`avatars/` | **小体积、不可再生**，删了就丢信息 |
+| `{下载根目录}/.cache/` | 缩略图、画廊图片、预览图、阅读临时缓存 | **大体积、可再生**，放你自己的盘 |
+| `{下载根目录}/` | 各平台下载的媒体内容（`*-download/`） | 你的下载成果 |
+
+下载根目录 = 设置里的「下载目录」，对应 `data/config.json` 的 `video_download_root`。
+**建议指向项目外的独立目录**（如 `D:\OGC下载`）：既能让程序目录保持精简，升级 / 重装也不影响已下载内容。
+
+> **从旧版本升级**：首次启动会**自动迁移** —— 把 `data/` 里的大体积缓存搬到下载根目录的 `.cache/`，
+> 并把散落在下载目录里的索引 JSON（`.thumb_index.json`、`.dir_cache`、`.{平台}_offline_index.json`）
+> 收回 `data/`。迁移前会自动把索引与数据库备份到 `data/_migration_backup_*/`（确认无误后可删）。
+>
+> 也可以手动执行（**默认只预览，不动任何文件**）：
+>
+> ```bash
+> .venv\Scripts\python.exe scripts\migrate_storage.py            # 预览会发生什么
+> .venv\Scripts\python.exe scripts\migrate_storage.py --apply    # 执行迁移
+> .venv\Scripts\python.exe scripts\migrate_storage.py --verify   # 迁移后自检
+> .venv\Scripts\python.exe scripts\migrate_storage.py --cleanup  # 清理旧备份与空目录
+> ```
+
 ## 🛠️ 技术栈
 
 | 类别 | 技术 |

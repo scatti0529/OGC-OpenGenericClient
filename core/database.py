@@ -664,8 +664,10 @@ def _count_files(dirs) -> int:
     """统计目录中的文件数量（跳过隐藏文件、.part/.tmp 残留与缓存目录）"""
     if isinstance(dirs, str):
         dirs = [dirs]
-    excluded_dirs = {'thumb_cache', 'thumbs', '.thumbs', 'dir_cache',
-                     '__pycache__', 'cache', '.git'}
+    # 缓存目录一律排除：旧命名（thumb_cache / dir_cache / thumbs）
+    # 与新命名（.cache 及其下的 thumbs、ehentai、easycopy 等）都算
+    excluded_dirs = {'thumb_cache', 'thumbs', '.thumbs', 'dir_cache', '.dir_cache',
+                     '.cache', '__pycache__', 'cache', '.git'}
     total = 0
     for d in dirs:
         if not d or not os.path.isdir(d):

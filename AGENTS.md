@@ -83,10 +83,20 @@ ehviewer/            EhViewer 核心移植
   ehviewer/ui/       Qt 界面层（画廊列表 / 详情 / 阅读器 / 收藏 / 历史 / 下载 / 搜索）
 resources/           config.json 默认配置、i18n、fonts、images、qss
 scripts/             开发与回归脚本（smoke_* / verify_* / dbg_* / test_*）
-data/                运行期用户数据（数据库、config.json、cookie）——**不进仓库**
+data/                **小体积、不可再生**：索引 JSON、配置、数据库、7Z、avatars —— **不进仓库**
+  data/thumb_index.json     缩略图索引        data/dir_cache/        目录扫描索引
+  data/offline_index/       漫画离线索引      data/ehentai/app_db.db EhViewer 数据库
+  data/7Z/  data/avatars/   解压器 / 头像     data/_migration_backup_*/  迁移备份（可删）
 logs/                运行日志 ——**不进仓库**
 tests/               空占位目录（只有 `__init__.py`）；真实回归都在 `scripts/`
 ```
+
+> 🗂️ **缓存与数据是分开的（2026-09 重构，务必遵守）**
+> `{下载根目录}/.cache/` 存**大体积可再生**缓存（`thumbs/`、`ehentai/`、`easycopy/`），
+> `data/` 只存**小体积不可再生**的索引 / 配置 / 数据库。这样几百 MB 缓存不会撑大程序目录，
+> 换下载盘也不丢索引。重构前 `data/` 实测 576 MB，现在约 23 MB。
+> **路径一律从 `core.config` 取**（`CFG.download_root` / `CFG.cache_path(...)` /
+> `CFG.offline_index_path(...)`），不要自己再拼一份 —— 详见 §4.9 与 §7 第 14、15 条。
 
 > ⚠️ **`pages/music/` 与 `ehviewer/data/` 必须保持入库。** 它们曾被 `.gitignore` 的
 > `music/`、`data/` 规则（未锚定到仓库根）吞掉、从未进入 git 历史，导致别人 clone 后
@@ -198,7 +208,8 @@ success, message, path = download_media(url, filename, platform, file_type='vide
 
 - 目录结构：`{video_download_root}/{platform}-download/{images|videos|audios|sourcefiles}`。
   平台目录名映射见 `PLATFORM_FOLDERS`（如 `douyin-download`、`easycopy-download`）。
-- 根目录取 `CFG['video_download_root']`，无效则回退 `data/`；启动时 `ensure_download_dirs()` 自检。
+- 根目录取 `CFG.download_root`：**配置了就以配置为准并自动建目录**；只有真的建不出来（盘符不存在/无权限）才回退 `data/`。
+  旧实现是「配置路径不存在 → 静默回退 data/」，结果用户指定的下载盘只要还没建目录就失效，几百 MB 全落回项目内。启动时 `ensure_download_dirs()` 自检。
 - 文件名必须过 `sanitize_filename()`；写盘前用 `get_unique_path()` 避免覆盖。
 - 下载模式自适应（`auto` → 并发分块 / 流式 / HLS），不要绕过它自己写 `requests.get(..., stream=True)` 存盘。
 
@@ -210,6 +221,30 @@ success, message, path = download_media(url, filename, platform, file_type='vide
 - 大段修复处常带「原实现…现改为…」的因果说明——保留它们。
 - 导入沿用现有分组：标准库 → 第三方 → PyQt5/qfluentwidgets → `core` → `ui/pages/services`。
 - 不引入新的 linter/formatter 配置；保持与周围代码一致即可。
+
+### 4.9 存储路径：一切从 `core.config` 取，别自己拼
+
+```python
+from core.config import config as CFG
+
+CFG.download_root                     # 下载根目录（权威解析 + 自动创建）
+CFG.cache_path('ehentai', 'cache')    # {下载根}/.cache/...  大体积可再生的缓存
+CFG.offline_index_path('easycopy')    # data/offline_index/... 索引（小体积不可再生）
+CFG.set_root(项目根)                   # 仅维护脚本需要（见下）
+```
+
+判断新文件该放哪，只问一句：**丢了能不能重新生成？**
+
+| 能重新生成（缓存/缩略图/预览/阅读临时图） | 不能（索引/配置/数据库/进度/头像） |
+|---|---|
+| `CFG.cache_path(...)` → `{下载根}/.cache/` | `data/` 内（`CFG.data` / `CFG.offline_index_path`） |
+
+- **禁止再写第二份「配置 → 回退」实现**：历史上 `download_manager` 与 `file_library` 各有一份且细节不同，
+  同一次运行两处算出不同根目录，缓存被写到两个地方。
+- 缓存目录一律放在下载根的 `.cache/` 下（点号前缀），文件库扫描会跳过隐藏项，不会把缓存当用户内容列出来。
+- **维护脚本必须显式 `CFG.set_root(<项目根>)`**：默认 root 取自 `sys.argv[0]`，`python scripts/xxx.py`
+  会解析成 `scripts/`，于是 `data/` 变成 `scripts/data`（这是为了让冒烟测试与真实数据隔离，别改）。
+  需要动真实 `data/` 的脚本（如 `scripts/migrate_storage.py`）不调用它就会改错地方。
 
 ---
 
@@ -247,6 +282,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | 脚本 | 覆盖 |
 |------|------|
 | `smoke_fresh_install.py` | **全新安装**：随包模块/资源是否齐全、core 未反向依赖 ui、首建库自带管理员且不覆盖密码 |
+| `smoke_storage_layout.py` | **存储布局**：缓存只在 `{下载根}/.cache`、索引只在 `data/`、缓存不出现在文件库列表、迁移幂等与去重/冲突规则 |
 | `smoke_test_album.py` | 画册：编译 + 导入 + 无头构建页面 |
 | `smoke_test_ehentai_fix.py` / `smoke_eh_*.py` | E-Hentai：新结构、分页、同步、下载队列、写库、对账 |
 | `smoke_test_easycopy.py` / `smoke_test_readers.py` | 拷贝漫画 / 各阅读器 |
@@ -287,6 +323,14 @@ $env:QT_QPA_PLATFORM = 'offscreen'
     qfluentwidgets 的 `FolderValidator.correct()` 会 `Path(value).mkdir()`，于是**每次 import 都在当前工作目录重新长出 `app/download/`**
     （位置还随 cwd 漂移）。删除目录无用，必须把默认值改成基于 `__file__` 的绝对路径。
     推而广之：任何带 `FolderValidator` 的配置项默认值都要用绝对路径。
+14. **缓存混进 data/ → 程序目录被几百 MB 撑大**：重构前 `data/ehentai/cache`(433MB)、`data/thumb_cache`(53MB)、
+    `data/easycopy/images`(49MB) 全在程序目录内，而另一份现行缩略图缓存 `.thumbs`(191MB) 又在下载根目录 ——
+    同类缓存散落两地。现已统一：缓存 → `{下载根}/.cache/`，索引 → `data/`（`data/` 从 576MB 降到 23MB）。
+    **新增大体积产物一律走 `CFG.cache_path(...)`**，别再往 data/ 里塞。
+15. **切页即重载 → 每次切回来都要重新等**：`easycopy_page._refresh_current_tab` 在**每次标签切换**都 `load()`；
+    `ehentai_reader` / `jmcomic_reader._on_pivot_changed` **每次切到离线标签都重扫本地目录**。
+    现改为「**首次进入才加载**」（`_loaded_tabs` / `_offline_loaded` 守卫），刷新按钮与删除信号走 `force=True`。
+    写"显示本地文件"的新页面时照此办理：**扫描结果要留驻，不要在 show / 切页里无条件重扫**。
 
 ---
 
@@ -315,4 +359,6 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 - [ ] 新下载走 `download_manager`，未自建目录与命名规则
 - [ ] 关键路径有中文日志，长任务设置了 `set_task_tag`
 - [ ] 对应的 `scripts/smoke_*.py` 已跑且退出码为 0（无头）
+- [ ] 新的大体积产物走 `CFG.cache_path(...)`（不塞进 `data/`）；索引走 `CFG.data` / `CFG.offline_index_path(...)`
+- [ ] 显示本地文件的页面不在切页时重扫（首次加载 + 显式刷新，见 §7 第 15 条）
 - [ ] 暂存区无 `data/`、cookie、日志、媒体文件与本机绝对路径

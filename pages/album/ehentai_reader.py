@@ -262,10 +262,18 @@ class EhentaiReaderPage(QWidget):
         if widget is not None:
             self._tabs_stack.setCurrentWidget(widget)
             if routeKey == "ehOfflineTab":
-                self.offline_tab.set_scan_root(
-                    _eh_cfg.get(_eh_cfg.KEY_OUTPUT_DIR, str(_default_output_dir()))
-                )
-                self.offline_tab.load()
+                new_root = _eh_cfg.get(_eh_cfg.KEY_OUTPUT_DIR,
+                                       str(_default_output_dir()))
+                # 原实现每次切到本标签页都 load()，等于**每切回来一次就重扫一遍
+                # 本地画廊目录**（大目录要等好几秒）。现在只在两种情况下加载：
+                #   1) 首次进入本标签页；2) 输出目录被改过（否则会一直显示旧目录的内容）。
+                # 显式刷新仍由「刷新」按钮与 reload_offline() 提供。
+                changed = os.path.abspath(new_root) != os.path.abspath(
+                    self.offline_tab.scan_root or '')
+                self.offline_tab.set_scan_root(new_root)
+                if changed or not getattr(self, '_offline_loaded', False):
+                    self._offline_loaded = True
+                    self.offline_tab.load()
 
     def _open_offline_comic(self, comic):
         self._root_stack.setCurrentWidget(self.offline_comic_page)
@@ -293,6 +301,7 @@ class EhentaiReaderPage(QWidget):
     def reload_offline(self):
         root = _eh_cfg.get(_eh_cfg.KEY_OUTPUT_DIR, str(_default_output_dir()))
         self.offline_tab.set_scan_root(root)
+        self._offline_loaded = True
         self.offline_tab.load()
 
 

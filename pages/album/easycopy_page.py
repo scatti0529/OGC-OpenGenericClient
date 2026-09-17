@@ -32,6 +32,7 @@ from qfluentwidgets import (
     TitleLabel,
 )
 
+from core.logger import logger
 from services.easycopy.app import AppContext
 from ui.widgets.theme import ensure_theme_connected, on_theme_changed, text_tertiary
 
@@ -173,13 +174,16 @@ class EasyCopyPage(QWidget):
         ensure_theme_connected()
         on_theme_changed(self._apply_theme_style)
 
+        # 已加载过的标签页：用于「首次进入才加载」，避免每次切回来都重新扫描/请求
+        self._loaded_tabs = set()
+
         # 延迟首载（等窗口就绪）
         QTimer.singleShot(0, self._initial_load)
 
     # ------------------------------------------------------------------
     def _initial_load(self):
         try:
-            self.home_page.load()
+            self._refresh_current_tab(self.TAB_HOME, force=True)
         except Exception:
             pass
 
@@ -199,19 +203,38 @@ class EasyCopyPage(QWidget):
             self.stackedWidget.setCurrentWidget(widget)
             self._refresh_current_tab(routeKey)
 
-    def _refresh_current_tab(self, routeKey: str) -> None:
-        if routeKey == self.TAB_HOME:
-            self.home_page.load()
-        elif routeKey == self.TAB_DISCOVER:
-            self.discover_page.load()
-        elif routeKey == self.TAB_RANK:
-            self.rank_page.load()
-        elif routeKey == self.TAB_PROFILE:
-            self.profile_page.load()
-        elif routeKey == self.TAB_SETTINGS:
-            self.settings_page.load()
-        elif routeKey == self.TAB_OFFLINE:
-            self.offline_page.load()
+    def _refresh_current_tab(self, routeKey: str, force: bool = False) -> None:
+        """切到某标签页时**按需**加载（每个标签页只加载一次）。
+
+        原实现每次切换标签页都无条件 ``load()``，代价是：
+          · 切到「离线」标签页 = 重新扫描本地漫画目录（大目录要等好几秒）；
+          · 切回首页 / 发现 / 排行 = 重新发一遍网络请求。
+        用户体验就是"换到别的页面再换回来又要重新等一遍"。
+
+        现在只在**首次进入**时加载，之后复用已有内容与已算好的索引；
+        确实需要最新数据时由「刷新」按钮、下载完成信号、删除操作显式触发，
+        它们都传 ``force=True``。
+        """
+        if not routeKey:
+            return
+        if not force and routeKey in self._loaded_tabs:
+            return
+        loaders = {
+            self.TAB_HOME: self.home_page.load,
+            self.TAB_DISCOVER: self.discover_page.load,
+            self.TAB_RANK: self.rank_page.load,
+            self.TAB_PROFILE: self.profile_page.load,
+            self.TAB_SETTINGS: self.settings_page.load,
+            self.TAB_OFFLINE: self.offline_page.load,
+        }
+        loader = loaders.get(routeKey)
+        if loader is None:
+            return
+        self._loaded_tabs.add(routeKey)
+        try:
+            loader()
+        except Exception as e:
+            logger.error(f"加载标签页 {routeKey} 失败: {e}")
 
     # ------------------------------------------------------------------
     #  导航：漫画卡片 / 章节
@@ -225,12 +248,15 @@ class EasyCopyPage(QWidget):
         # 排行筛选 -> 排行标签页
         if path.startswith('/rank'):
             self.pivot.setCurrentItem(self.TAB_RANK)
+            # 已经按 href 定向加载了，标记为已加载，免得切页逻辑再默认加载一次把它覆盖掉
+            self._loaded_tabs.add(self.TAB_RANK)
             self.rank_page.load(href)
             return
 
         # 发现 / 筛选 / 专题等 -> 发现标签页
         if path.startswith(('/comics', '/filter', '/recommend', '/newest', '/author', '/topic', '/search')):
             self.pivot.setCurrentItem(self.TAB_DISCOVER)
+            self._loaded_tabs.add(self.TAB_DISCOVER)
             self.discover_page.load(href)
             return
 
@@ -251,10 +277,12 @@ class EasyCopyPage(QWidget):
             return
         if path.startswith('/rank'):
             self.pivot.setCurrentItem(self.TAB_RANK)
+            self._loaded_tabs.add(self.TAB_RANK)
             self.rank_page.load(href)
             return
         if path.startswith(('/comics', '/filter', '/recommend', '/newest', '/author', '/topic')):
             self.pivot.setCurrentItem(self.TAB_DISCOVER)
+            self._loaded_tabs.add(self.TAB_DISCOVER)
             self.discover_page.load(href)
             return
         self._root_stack.setCurrentWidget(self.detail_page)
