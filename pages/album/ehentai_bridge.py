@@ -79,15 +79,37 @@ def ensure_writable(path):
 
 
 def route_to_shared_db(db_path):
-    """将 ehviewer.db 指向共享数据库。db_path 为空则用包内默认。"""
-    if not db_path:
+    """把 ehviewer.db 指向统一数据库。
+
+    ⚠️ 数据库已合并为一个（``core.database.DB_PATH``），所以传进来的路径只用于
+    **兼容旧调用**：``ehviewer.db.set_db_path()`` 现在会忽略任何"换成别的库"的请求，
+    本函数直接返回统一库路径。以前让界面从 A 库读、下载记录写进 B 库会让双方都
+    看不到对方的数据，合并后刻意禁掉这种能力。
+    """
+    try:
+        # 旧库若还存在，顺手把它的数据并进统一库（幂等，已并过就什么都不做）
+        from core.database import get_db_path
+        unified = get_db_path()
+        if db_path and os.path.normcase(os.path.abspath(db_path)) != \
+                os.path.normcase(os.path.abspath(unified)) and os.path.isfile(db_path):
+            try:
+                from core import db_unify
+                r = db_unify.merge_database(db_path, target_path=unified,
+                                            rename_source=False)
+                if r['moved']:
+                    print(f'[ehentai] 已从 {db_path} 合并 {r["moved"]} 行到统一库')
+            except Exception as e:
+                print(f'[ehentai] 合并 {db_path} 失败（忽略）: {e}')
         ehdb.set_db_path(None)
+        return unified
+    except Exception:
         return ehdb.get_db_path()
-    ensure_writable(db_path)
-    ehdb.set_db_path(db_path)
-    return ehdb.get_db_path()
 
 
 def shared_db_path(default_db_path: str) -> str:
-    """返回最终数据库路径（默认即共享库）。"""
-    return default_db_path or ehdb.get_db_path()
+    """返回最终数据库路径（永远是统一库）。"""
+    try:
+        from core.database import get_db_path
+        return get_db_path()
+    except Exception:
+        return default_db_path or ehdb.get_db_path()

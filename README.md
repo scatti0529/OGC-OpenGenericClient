@@ -103,8 +103,16 @@
 | 内容 | 位置 | 说明 |
 |------|------|------|
 | 程序本体 | 安装目录（默认 `%LOCALAPPDATA%\Programs\OGC-OpenGenericClient`） | **卸载只删这里** |
-| 配置 / 索引 / 账号库 / 头像 / 日志 | `%APPDATA%\OGC-OpenGenericClient` | 每个 Windows 用户各一份 |
+| 配置 / 索引 / 数据库 / 头像 / 日志 | `%APPDATA%\OGC-OpenGenericClient` | 每个 Windows 用户各一份 |
 | 下载的媒体内容 + `.cache` 缓存 | 你在设置里选的**下载根目录** | 安装、升级、卸载都不碰 |
+
+> 🗄️ **全程序只有一个数据库文件 `ogc_users.db`。** 账号与权限、音乐歌单、JMComic 订阅、
+> 抖音记录、以及 **E-Hentai 的收藏 / 下载记录 / 历史 / 标签过滤** 全在这一个文件里，
+> 备份或换机只需带走它一个。
+> 首次启动就会建出**完整表结构**（不是用到某个功能才懒建），所以全新安装后直接打开任意页面
+> 都不会遇到"表不存在"。老版本留下的 `data/ehentai/app_db.db` 会在首次启动时把数据
+> **合并进统一库**（重复行以统一库现有数据为准，不会被旧数据覆盖），旧文件改名为
+> `app_db.db.merged-<时间戳>` **留档不删除**，确认无误后可自行删除。
 
 > 🎯 **设置里只有一个「下载目录」需要你选。** 各平台下载（`douyin-download`、`pixiv-download`…）、
 > 音乐下载（`music-download`）、音乐缓存（`.cache/music`）以及所有缩略图/画廊缓存都在它下面，
@@ -187,7 +195,7 @@ python main.py
 >
 > ⚠️ **注意**：项目路径含中文时 PyQt5 无法自动定位平台插件，`main.py` 已在导入 Qt 前自动注入 `QT_QPA_PLATFORM_PLUGIN_PATH` 环境变量解决此问题。
 >
-> ⚠️ **注意**：首次运行会自动创建 `data/` 目录（用户数据库、配置）。`data/` 目录包含本地敏感配置（Cookie、账号、自动登录信息），已在 `.gitignore` 中排除，请勿提交到仓库。
+> ⚠️ **注意**：首次运行会自动创建 `data/` 目录（用户数据库 `ogc_users.db`、配置）。`data/` 目录包含本地敏感配置（Cookie、账号、自动登录信息），已在 `.gitignore` 中排除，请勿提交到仓库。
 
 ### 🔧 可选环境变量
 
@@ -277,6 +285,7 @@ OGC-OpenGenericClient/
 │   ├── downloader.py / image_cache.py / config.py / urls.py
 │   ├── tag_translation.py + data/tag_translations.json.gz
 │   └── ui/                     # 画廊列表/详情/阅读器/收藏/历史/下载/搜索等
+│                               # db.py 不自建库，读写的是统一库 data/ogc_users.db
 ├── resources/                  # 资源文件（图标/字体/翻译/样式）
 │   ├── config/config.json      # 应用默认配置（路径/主题/下载）
 │   ├── i18n/ fonts/ images/ qss/

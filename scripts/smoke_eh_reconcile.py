@@ -16,11 +16,10 @@ app = QApplication.instance() or QApplication(sys.argv)
 from pages.album.ehentai_settings import ehentai_cfg as _c
 from pages.album import ehentai_sync as S
 
-orig = _c.get(_c.KEY_DB_PATH)
-tmp = tempfile.mkdtemp(prefix='ogc_recon_')
-tmp_db = os.path.join(tmp, 'app_db.db')
-shutil.copy2(os.path.join(BASE, 'data', 'ehentai', 'app_db.db'), tmp_db)
-_c.set(_c.KEY_DB_PATH, tmp_db)
+# 数据库已统一（E-Hentai 表在账号库 ogc_users.db 里）→ 拷一份副本再跑
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+tmp, tmp_db = use_temp_db(prefix='ogc_recon_')
 
 # 临时下载目录：comicB 有元数据(gid=999999004)，comicA 无元数据(无gid)
 dldir = os.path.join(tmp, 'ExHentai-download')
@@ -50,6 +49,5 @@ print('comicB DOWNLOADS rows:', c.execute('select GID,LABEL,STATE from DOWNLOADS
 print('total DOWNLOADS:', c.execute('select count(*) from DOWNLOADS').fetchone()[0])
 c.close()
 
-_c.set(_c.KEY_DB_PATH, orig)
-shutil.rmtree(tmp, ignore_errors=True)
+cleanup_temp_db(tmp)
 print('DONE')

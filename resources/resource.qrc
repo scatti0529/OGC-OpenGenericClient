@@ -1,7 +1,6 @@
 <RCC>
   <qresource>
-    <file>images/girl.jpg</file>
-    <file>images/background.jpg</file>
-    <file>images/logo.png</file>
+    <file alias="images/background.jpg">images/background/background.jpg</file>
+    <file alias="images/logo.png">images/logo/logo.png</file>
   </qresource>
 </RCC>

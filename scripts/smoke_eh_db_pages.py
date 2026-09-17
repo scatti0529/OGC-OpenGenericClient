@@ -21,8 +21,11 @@ from ehviewer.appctx import ctx
 from ehviewer.session import make_session
 from ehviewer.image_cache import ImageLoader
 from ehviewer.downloader import DownloadManager
-ogc_db = os.path.join(BASE, 'data', 'ehentai', 'app_db.db')
-ehdb.set_db_path(ogc_db)
+# 数据库已统一 → E-Hentai 表就在账号库 ogc_users.db 里；本脚本要构建真实页面，
+# 可能触发写操作，因此跑在副本上。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+_tmp_dir, ogc_db = use_temp_db(prefix='ogc_eh_dbpages_')
 ctx.session_factory = make_session
 ctx.image_loader = ImageLoader(make_session)
 ctx.download_manager = DownloadManager()
@@ -72,3 +75,4 @@ except Exception as e:
 
 ctx.image_loader.shutdown(); ctx.download_manager.shutdown()
 print('DONE')
+cleanup_temp_db(_tmp_dir)

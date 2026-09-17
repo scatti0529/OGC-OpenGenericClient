@@ -15,11 +15,12 @@ app = QApplication.instance() or QApplication(sys.argv)
 from pages.album.ehentai_settings import ehentai_cfg as _c
 from pages.album import ehentai_sync as S
 import sqlite3
-orig = _c.get(_c.KEY_DB_PATH)
-tmp = tempfile.mkdtemp(prefix='ogc_cat_')
-tmp_db = os.path.join(tmp, 'app_db.db')
-shutil.copy2(os.path.join(BASE, 'data', 'ehentai', 'app_db.db'), tmp_db)
-_c.set(_c.KEY_DB_PATH, tmp_db)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+
+# 数据库已统一（E-Hentai 的表就在账号库 ogc_users.db 里），所以这里改成：
+# 拷一份统一库到临时目录、把 ehviewer 指过去 —— 不再有独立的 app_db.db。
+tmp, tmp_db = use_temp_db(prefix='ogc_cat_')
 comic_dir = os.path.join(tmp, '某漫画目录')
 os.makedirs(comic_dir, exist_ok=True)
 with open(os.path.join(comic_dir, '.ehentai_info.json'), 'w', encoding='utf-8') as f:
@@ -30,6 +31,5 @@ c = sqlite3.connect(tmp_db)
 print('row label after set =', c.execute("SELECT LABEL FROM DOWNLOADS WHERE GID=999999005").fetchone()[0])
 c.close()
 print('cat after =', repr(S.comic_category(comic_dir, '某漫画目录')))
-_c.set(_c.KEY_DB_PATH, orig)
-shutil.rmtree(tmp, ignore_errors=True)
+cleanup_temp_db(tmp)
 print('DONE')

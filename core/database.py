@@ -178,6 +178,119 @@ def init_jmcomic_tables():
 
 
 
+# ═══════════════ 统一数据库 schema ═══════════════
+# 全程序**只有一个** SQLite 文件：data/ogc_users.db（冻结时 %APPDATA%\OGC-OpenGenericClient\
+# ogc_users.db）。历史上 E-Hentai 模块用的是另一个文件（data/ehentai/app_db.db），
+# 于是"账号库"和"收藏/下载记录"分家：换机只备份一个库就会丢另一半，卸载向导也只能
+# 备份其中之一。2026-09 合并成一个：E-Hentai 的表结构在这里定义（唯一真源），
+# ehviewer/db.py 从这里导入，init_db() 会一次性建全 —— 所以**第一次启动就得到完整结构**。
+#
+# 表名沿用 Android EhViewer (greenDAO) 的原名，方便直接导入旧版 EhViewer 的数据库。
+EHENTAI_DDL = {
+    "DOWNLOADS": """
+        CREATE TABLE IF NOT EXISTS "DOWNLOADS" (
+          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
+          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
+          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "STATE" INTEGER NOT NULL,
+          "LEGACY" INTEGER NOT NULL, "TIME" INTEGER NOT NULL, "LABEL" TEXT,
+          "ARCHIVE_URI" TEXT)""",
+    "DOWNLOAD_LABELS": """
+        CREATE TABLE IF NOT EXISTS "DOWNLOAD_LABELS" (
+          "_id" INTEGER PRIMARY KEY, "LABEL" TEXT, "TIME" INTEGER NOT NULL)""",
+    "DOWNLOAD_DIRNAME": """
+        CREATE TABLE IF NOT EXISTS "DOWNLOAD_DIRNAME" (
+          "GID" INTEGER PRIMARY KEY, "DIRNAME" TEXT)""",
+    "HISTORY": """
+        CREATE TABLE IF NOT EXISTS "HISTORY" (
+          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
+          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
+          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "MODE" INTEGER NOT NULL,
+          "TIME" INTEGER NOT NULL)""",
+    "LOCAL_FAVORITES": """
+        CREATE TABLE IF NOT EXISTS "LOCAL_FAVORITES" (
+          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
+          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
+          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "TIME" INTEGER NOT NULL)""",
+    "QUICK_SEARCH": """
+        CREATE TABLE IF NOT EXISTS "QUICK_SEARCH" (
+          "_id" INTEGER PRIMARY KEY, "NAME" TEXT, "MODE" INTEGER NOT NULL,
+          "CATEGORY" INTEGER NOT NULL, "KEYWORD" TEXT, "ADVANCE_SEARCH" INTEGER NOT NULL,
+          "MIN_RATING" INTEGER NOT NULL, "PAGE_FROM" INTEGER NOT NULL,
+          "PAGE_TO" INTEGER NOT NULL, "TIME" INTEGER NOT NULL)""",
+    "FILTER": """
+        CREATE TABLE IF NOT EXISTS "FILTER" (
+          "_id" INTEGER PRIMARY KEY, "MODE" INTEGER NOT NULL, "TEXT" TEXT, "ENABLE" INTEGER)""",
+    "Gallery_Tags": """
+        CREATE TABLE IF NOT EXISTS "Gallery_Tags" (
+          "GID" INTEGER PRIMARY KEY NOT NULL, "ROWS" TEXT, "ARTIST" TEXT, "COSPLAYER" TEXT,
+          "CHARACTER" TEXT, "FEMALE" TEXT, "GROUP" TEXT, "LANGUAGE" TEXT, "MALE" TEXT,
+          "MISC" TEXT, "MIXED" TEXT, "OTHER" TEXT, "PARODY" TEXT, "RECLASS" TEXT,
+          "CREATE_TIME" INTEGER, "UPDATE_TIME" INTEGER)""",
+    "Black_List": """
+        CREATE TABLE IF NOT EXISTS "Black_List" (
+          "_id" INTEGER PRIMARY KEY AUTOINCREMENT, "BADGAYNAME" TEXT, "REASON" TEXT,
+          "ANGRYWITH" TEXT, "ADD_TIME" TEXT, "MODE" INTEGER)""",
+    "BOOKMARKS": """
+        CREATE TABLE IF NOT EXISTS "BOOKMARKS" (
+          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
+          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
+          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "PAGE" INTEGER NOT NULL,
+          "TIME" INTEGER NOT NULL)""",
+}
+
+#: 其它模块负责建的表（各自 init_*_tables() 里 CREATE TABLE IF NOT EXISTS）。
+#: 这里只登记名字，供启动自检与回归测试核对"结构是否齐全"。
+OTHER_KNOWN_TABLES = (
+    'users', 'usage_stats', 'pixiv_tokens', 'music_playlists', 'music_songs',
+    'music_downloads', 'jm_subscriptions', 'download_quota',
+)
+
+#: 一个**完整**数据库应当包含的全部表（不含 sqlite_ 内部表）。
+ALL_TABLES = tuple(EHENTAI_DDL.keys()) + OTHER_KNOWN_TABLES
+
+
+def get_db_path() -> str:
+    """统一数据库文件的绝对路径（其它模块要拿路径一律走这里）。"""
+    return DB_PATH
+
+
+def init_ehentai_tables():
+    """确保 E-Hentai 的表存在（幂等；由 init_db() 调用，也可单独调用）。
+
+    ``ehviewer/db.py::_get_conn()`` 也会做同样的事（它可能先于 init_db 被使用），
+    两边用的是**同一份 DDL 常量**，不会出现结构漂移。
+    """
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        for ddl in EHENTAI_DDL.values():
+            try:
+                cur.execute(ddl)
+            except sqlite3.Error as e:
+                _get_logger().warning(f"创建 E-Hentai 表失败（忽略）: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_tables() -> set:
+    """当前数据库里的表名集合（不含 sqlite_ 内部表）。"""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'").fetchall()
+        return {r[0] for r in rows}
+    finally:
+        conn.close()
+
+
+def missing_tables() -> list:
+    """ALL_TABLES 里有哪些还不存在（正常应为空 —— 用于启动自检与回归测试）。"""
+    have = list_tables()
+    return [t for t in ALL_TABLES if t not in have]
+
+
 def _ensure_indexes():
     """为高频查询列创建索引（CREATE INDEX IF NOT EXISTS，幂等、纯增量）。"""
     indexes = [
@@ -265,9 +378,29 @@ def init_db():
             init_usage_table()
         except Exception:
             pass
+        # E-Hentai 的表 —— 与账号库同库，首次启动即建全（见上方 EHENTAI_DDL 的说明）
+        try:
+            init_ehentai_tables()
+        except Exception as e:
+            logger.error(f"创建 E-Hentai 表失败: {str(e)}")
+        # 音乐 / Pixiv 的表：以前只在**首次用到那个功能时**才懒创建，
+        # 于是"全新安装 → 直接打开音乐页"这类路径会先撞上 no such table。
+        # 用户要求"第一次启动就创建完整结构"，这里显式建全（幂等）。
+        for _init in (init_pixiv_tokens_table, init_music_tables, init_jmcomic_tables):
+            try:
+                _init()
+            except Exception as e:
+                logger.error(f"创建表失败（{getattr(_init, '__name__', _init)}）: {e}")
         # 为高频查询列建索引（加速启动与模块查询）
         try:
             _ensure_indexes()
+        except Exception:
+            pass
+        # 结构自检：全新数据库必须一次建全（少了表说明某个 init_*_tables 没跑到）
+        try:
+            missing = missing_tables()
+            if missing:
+                logger.warning(f"数据库缺少这些表（可能对应模块未初始化）: {missing}")
         except Exception:
             pass
         logger.info("数据库初始化成功")

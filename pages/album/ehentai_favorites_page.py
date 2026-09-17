@@ -724,13 +724,21 @@ class FavoritesPage(QWidget):
     # ============================================================
     @staticmethod
     def db_path() -> str:
-        """当前收藏数据库文件路径（动态读取配置）"""
-        return ehentai_cfg.get(ehentai_cfg.KEY_DB_PATH, '')
+        """收藏数据所在的数据库 —— 与账号库同一个统一库（不再是独立 app_db.db）。
+
+        取 ``ehviewer.db.get_db_path()``：默认即统一库；测试脚本可用
+        ``set_db_path()`` 临时指到副本，应用本身不切换。
+        """
+        from ehviewer import db as ehdb
+        return ehdb.get_db_path()
 
     def set_db_path(self, path: str) -> None:
-        """切换数据库文件并立即刷新（由设置页调用）"""
-        if path:
-            ehentai_cfg.set(ehentai_cfg.KEY_DB_PATH, path)
+        """兼容旧调用：数据库已统一，这里只重新加载界面。
+
+        以前它会把配置里的数据库路径切到另一个文件；现在只有一个库，
+        传进来的路径被忽略（``ehentai_bridge.route_to_shared_db`` 会把旧库
+        的数据并进统一库，但不会改变"界面从哪读"）。
+        """
         # 代理等配置可能变化，重新应用
         self.thumbnail_loader._apply_proxy()
         # 清空封面缓存，重新加载

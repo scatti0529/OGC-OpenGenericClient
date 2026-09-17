@@ -32,12 +32,10 @@ print('load_from_disk ->', loaded is not None)
 tl._on_fetched(gid, open(p,'rb').read())
 print('cache in memory after fetch ->', gid in tl._cache)
 
-# --- 取消收藏 DB ---
-orig = _c.get(_c.KEY_DB_PATH)
-tmp = tempfile.mkdtemp(prefix='ogc_unfav_')
-tmpdb = os.path.join(tmp, 'app_db.db')
-shutil.copy2(os.path.join(BASE, 'data', 'ehentai', 'app_db.db'), tmpdb)
-_c.set(_c.KEY_DB_PATH, tmpdb)
+# --- 取消收藏 DB（数据库已统一 → 跑在统一库的临时副本上）---
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+tmp, tmpdb = use_temp_db(prefix='ogc_unfav_')
 c = sqlite3.connect(tmpdb)
 c.execute("INSERT OR REPLACE INTO LOCAL_FAVORITES (GID,TOKEN,TITLE,CATEGORY,RATING,TIME) VALUES (?,?,?,?,?,?)",
           (888888, 'x', '测试', 2, 4.0, 1))
@@ -55,6 +53,5 @@ print('history batch-delete removed ->', c.execute('select count(*) from HISTORY
 print('LOCAL_FAV count:', c.execute('select count(*) from LOCAL_FAVORITES').fetchone()[0],
       '| HISTORY count:', c.execute('select count(*) from HISTORY').fetchone()[0])
 c.close()
-_c.set(_c.KEY_DB_PATH, orig)
-shutil.rmtree(tmp, ignore_errors=True)
+cleanup_temp_db(tmp)
 print('DONE')

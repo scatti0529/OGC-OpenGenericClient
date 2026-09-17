@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """SQLite 持久层 —— 完全适配 Android 版 EhViewer (greenDAO) 数据库结构
-数据库：EhViewer_PC/app_db.db
+
+⚠️ **本模块不再有自己的数据库文件**：全程序统一用一个库
+``data/ogc_users.db``（冻结时 ``%APPDATA%\\OGC-OpenGenericClient\\ogc_users.db``）。
+历史上这里是独立的 ``data/ehentai/app_db.db``，与账号库分家 —— 于是备份/卸载/换机
+时只带走一个库就会丢另一半数据。2026-09 合并为一个：
+
+* 表结构（DDL）的真源在 ``core/database.py::EHENTAI_DDL``，本模块直接导入，
+  ``core.database.init_db()`` 首次启动就会把包括这些表在内的**完整结构**建好；
+* 数据库路径来自 ``core.database.DB_PATH``；``set_db_path()`` 保留只是为了兼容旧调用，
+  现在任何"换成别的库"的请求都会被忽略（见其 docstring）。
+
 表：DOWNLOADS 下载记录 / DOWNLOAD_LABELS 下载分类 / DOWNLOAD_DIRNAME 下载目录名 /
     HISTORY 历史 / LOCAL_FAVORITES 本地收藏 / QUICK_SEARCH 快速搜索(标签收藏) / FILTER 标签屏蔽
     （另有 Gallery_Tags / Black_List / BOOKMARKS 原表，本程序暂不使用）
@@ -14,29 +24,50 @@ import time
 from . import constants as C
 from .models import GalleryInfo
 
-# 默认数据库位置。运行时通常会被 OGC 通过 set_db_path() 指到
-# CFG.data/ehentai/app_db.db（见 pages/album/ehentai_settings.py 的 KEY_DB_PATH）。
-# 这里只作为**独立使用 ehviewer 时的兜底** —— 但兜底也必须落在可写目录：
-# 冻结后 __file__ 在 _internal/ 里，按它推导会把库写进安装目录。
+# 统一数据库：DDL 与路径都取自 core（唯一真源）。
+# 兜底分支只在"ehviewer 被单独拿去用、core 不可导入"时生效 —— 那种情况下退回
+# 包内同名文件，且**必须是可写目录**（冻结后 __file__ 在 _internal/ 里，写不进去）。
+_FALLBACK_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_db.db')
 try:
-    from core.config import config as _CFG
-    DB_PATH = os.path.join(str(_CFG.data), 'ehentai', 'app_db.db')
-except Exception:      # core 不可导入（ehviewer 被单独拿去用时）
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app_db.db')
+    from core.database import EHENTAI_DDL as DDL      # 表结构：与主程序同一份
+except Exception:      # pragma: no cover - 仅独立使用 ehviewer 时
+    DDL = {}
+    print('!! ehviewer.db 无法从 core 导入统一 DDL，数据库功能将不可用')
+
+
+def _unified_db_path() -> str:
+    """统一库路径（**每次现取**，不缓存）。
+
+    为什么不直接 ``from core.database import DB_PATH``：那样拿到的是 import 期的
+    快照，而本项目的测试会 monkeypatch ``core.database.DB_PATH`` 做隔离
+    （见 AGENTS.md §4.6 与 scripts/smoke_fresh_install.py）—— 快照会让两边指向
+    不同文件，测试就写到了真实库上。
+    """
+    try:
+        from core.database import get_db_path
+        return get_db_path()
+    except Exception:
+        return _FALLBACK_DB_PATH
+
+
+#: 兼容用途的模块级常量：应用启动后不再变化，等价于 `_unified_db_path()`。
+DB_PATH = _unified_db_path()
 DB_DIR = os.path.dirname(DB_PATH)
 
-# OGC 集成：允许在运行时把数据库指向与 E-Hentai 模块同一份 app_db.db（共享数据库）。
-# set_db_path() 须在首次访问连接之前调用；调用后会重建内部连接缓存。
+# 运行时数据库指向。应用层**不再**切换它（数据库已统一）；保留这个开关是给
+# 测试/工具用的：把 ehviewer 指到统一库的一份**临时副本**上跑，避免写到真实数据。
 _CUSTOM_DB_PATH = None
 
 
 def set_db_path(path):
-    """设置共享数据库路径（传 None 还原为包内默认）。
+    """把本模块指向 ``path``（传 None 回到统一库 ``core.database.DB_PATH``）。
 
-    必须在**锁内**切换并显式关闭旧连接：原实现在锁外把 ``_conn = None``
-    且不 close 旧连接 —— 运行中切库时，已持有旧 connection 的查询会继续
-    读写旧库文件，而新查询走新库，造成"状态分叉"（下载记录写进 A 库、
-    界面从 B 库读，双方都看不到对方），旧连接句柄也只能等 GC 才释放。
+    ⚠️ **应用代码不要调用它** —— 数据库已统一，界面与下载记录必须读写同一个文件。
+    仅测试/维护脚本使用：先 ``shutil.copy2`` 一份统一库到临时目录，再指过去，
+    跑完 ``set_db_path(None)`` 还原。
+
+    必须在**锁内**切换并显式关闭旧连接：否则已持有旧 connection 的查询会继续读写
+    旧库，而新查询走新库，造成"状态分叉"，旧句柄也只能等 GC 才释放。
     """
     global _CUSTOM_DB_PATH, _conn, _COLS
     with _lock:
@@ -53,7 +84,8 @@ def set_db_path(path):
 
 
 def get_db_path():
-    return _CUSTOM_DB_PATH or DB_PATH
+    """当前使用的数据库文件（默认即统一库；测试可临时指向副本）。"""
+    return _CUSTOM_DB_PATH or _unified_db_path()
 
 
 _lock = threading.RLock()
@@ -61,58 +93,6 @@ _conn = None
 _COLS = {}          # 表名 -> 列名集合（小写）
 STATE_NONE, STATE_WAIT, STATE_DOWNLOAD = C.STATE_NONE, C.STATE_WAIT, C.STATE_DOWNLOAD
 STATE_FINISH, STATE_FAILED = C.STATE_FINISH, C.STATE_FAILED
-
-DDL = {
-    "DOWNLOADS": """
-        CREATE TABLE IF NOT EXISTS "DOWNLOADS" (
-          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
-          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
-          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "STATE" INTEGER NOT NULL,
-          "LEGACY" INTEGER NOT NULL, "TIME" INTEGER NOT NULL, "LABEL" TEXT,
-          "ARCHIVE_URI" TEXT)""",
-    "DOWNLOAD_LABELS": """
-        CREATE TABLE IF NOT EXISTS "DOWNLOAD_LABELS" (
-          "_id" INTEGER PRIMARY KEY, "LABEL" TEXT, "TIME" INTEGER NOT NULL)""",
-    "DOWNLOAD_DIRNAME": """
-        CREATE TABLE IF NOT EXISTS "DOWNLOAD_DIRNAME" (
-          "GID" INTEGER PRIMARY KEY, "DIRNAME" TEXT)""",
-    "HISTORY": """
-        CREATE TABLE IF NOT EXISTS "HISTORY" (
-          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
-          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
-          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "MODE" INTEGER NOT NULL,
-          "TIME" INTEGER NOT NULL)""",
-    "LOCAL_FAVORITES": """
-        CREATE TABLE IF NOT EXISTS "LOCAL_FAVORITES" (
-          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
-          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
-          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "TIME" INTEGER NOT NULL)""",
-    "QUICK_SEARCH": """
-        CREATE TABLE IF NOT EXISTS "QUICK_SEARCH" (
-          "_id" INTEGER PRIMARY KEY, "NAME" TEXT, "MODE" INTEGER NOT NULL,
-          "CATEGORY" INTEGER NOT NULL, "KEYWORD" TEXT, "ADVANCE_SEARCH" INTEGER NOT NULL,
-          "MIN_RATING" INTEGER NOT NULL, "PAGE_FROM" INTEGER NOT NULL,
-          "PAGE_TO" INTEGER NOT NULL, "TIME" INTEGER NOT NULL)""",
-    "FILTER": """
-        CREATE TABLE IF NOT EXISTS "FILTER" (
-          "_id" INTEGER PRIMARY KEY, "MODE" INTEGER NOT NULL, "TEXT" TEXT, "ENABLE" INTEGER)""",
-    "GALLERY_TAGS": """
-        CREATE TABLE IF NOT EXISTS "Gallery_Tags" (
-          "GID" INTEGER PRIMARY KEY NOT NULL, "ROWS" TEXT, "ARTIST" TEXT, "COSPLAYER" TEXT,
-          "CHARACTER" TEXT, "FEMALE" TEXT, "GROUP" TEXT, "LANGUAGE" TEXT, "MALE" TEXT,
-          "MISC" TEXT, "MIXED" TEXT, "OTHER" TEXT, "PARODY" TEXT, "RECLASS" TEXT,
-          "CREATE_TIME" INTEGER, "UPDATE_TIME" INTEGER)""",
-    "BLACK_LIST": """
-        CREATE TABLE IF NOT EXISTS "Black_List" (
-          "_id" INTEGER PRIMARY KEY AUTOINCREMENT, "BADGAYNAME" TEXT, "REASON" TEXT,
-          "ANGRYWITH" TEXT, "ADD_TIME" TEXT, "MODE" INTEGER)""",
-    "BOOKMARKS": """
-        CREATE TABLE IF NOT EXISTS "BOOKMARKS" (
-          "GID" INTEGER PRIMARY KEY NOT NULL, "TOKEN" TEXT, "TITLE" TEXT, "TITLE_JPN" TEXT,
-          "THUMB" TEXT, "CATEGORY" INTEGER NOT NULL, "POSTED" TEXT, "UPLOADER" TEXT,
-          "RATING" REAL NOT NULL, "SIMPLE_LANGUAGE" TEXT, "PAGE" INTEGER NOT NULL,
-          "TIME" INTEGER NOT NULL)""",
-}
 
 # FILTER.MODE 语义（与 Android EhFilter 一致）
 FILTER_TITLE = 0
@@ -127,10 +107,10 @@ def _get_conn():
     原实现没有加锁：两个线程同时首次访问会各自建立一个连接，多出来的那个
     成为**无人关闭的泄漏连接**，`_COLS` 也会被重复写入。
 
-    另外该库（app_db.db）还会被 ehentai_sync 等模块用独立短连接并发读写，
-    默认 journal 模式下读写互斥，很容易 "database is locked"，而调用方
+    另外这个库（统一库 ogc_users.db）还会被 ehentai_sync / 账号模块等用独立短连接
+    并发读写，默认 journal 模式下读写互斥，很容易 "database is locked"，而调用方
     普遍 ``except Exception: return False`` 把它吞掉 —— 表现为下载记录/收藏
-    静默丢失。这里统一开启 WAL + 忙等超时。
+    静默丢失。这里统一开启 WAL + 忙等超时（与 core.database 的设置保持一致）。
     """
     global _conn
     with _lock:

@@ -10,6 +10,7 @@ E-Hentai 设置模块（OGC 集成版）
 新增功能：可手动选择本地收藏数据库文件（*.db），应用后立即刷新「我的收藏」页面数据。
 """
 import json
+import os
 from pathlib import Path
 
 from PyQt5.QtCore import pyqtSignal
@@ -61,6 +62,9 @@ class EhentaiConfig:
     KEY_COOKIES = 'cookies'
     KEY_HEADERS = 'headers'
     KEY_LAST_URL = 'last_url'
+    # ⚠️ 已废弃：数据库已统一为 data/ogc_users.db（见 core/database.py 的
+    # EHENTAI_DDL 与 core/db_unify.py）。这个键只为兼容老配置文件而保留 ——
+    # 读到它也不会切换数据库，只会在启动时把该文件的数据合并进统一库。
     KEY_DB_PATH = 'db_path'
 
     _instance = None
@@ -75,7 +79,8 @@ class EhentaiConfig:
             return
         self._initialized = True
         # 默认值
-        default_db = str(CFG.data / 'ehentai' / 'app_db.db')
+        # 注意：这里**没有** db_path 的默认值 —— 数据库已统一，默认值再指向
+        # data/ehentai/app_db.db 会让人以为还有第二个库。
         default_out = str(CFG.data / 'ehentai' / 'galleries')
         self._defaults = {
             self.KEY_PROXY: '',
@@ -88,7 +93,6 @@ class EhentaiConfig:
             self.KEY_COOKIES: '',
             self.KEY_HEADERS: '',
             self.KEY_LAST_URL: '',
-            self.KEY_DB_PATH: default_db,
         }
         self._section = {}
         self._load()
@@ -181,17 +185,23 @@ class SettingPage(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(16)
 
-        # ===== 数据库文件卡片（新增：手动选择收藏数据库） =====
+        # ===== 数据库卡片（与账号库统一：只读展示 + 导入旧库） =====
+        # 以前这里是"选择另一个收藏数据库"：选个 .db 就整站换库，于是账号库与
+        # 收藏库分家。现在全程序只有一个库，这张卡片只负责**告诉用户库在哪**、
+        # 以及把外部旧库的数据**合并**进来。
         db_card = CardWidget(self)
         db_layout = QVBoxLayout(db_card)
         db_layout.setContentsMargins(20, 16, 20, 16)
         db_layout.setSpacing(12)
 
-        db_layout.addWidget(SubtitleLabel('收藏数据库', db_card))
+        db_layout.addWidget(SubtitleLabel('数据库', db_card))
 
         db_desc = CaptionLabel(
-            '「我的收藏」从本地 SQLite 数据库读取数据。可手动选择其他数据库文件'
-            '（含 LOCAL_FAVORITES / DOWNLOADS 表的 .db 文件），选择后点击「应用并刷新收藏」。',
+            '收藏、下载记录、浏览历史与账号信息现在都保存在**同一个**数据库里'
+            '（不再有独立的 app_db.db）。这样「备份用户数据」一次就能带全，'
+            '换机也不会只丢一半。\n'
+            '手里如果有旧版 EhViewer / 早期版本的 .db 文件，可以点「导入外部数据库」'
+            '把里面的记录合并进来 —— 外部文件本身不会被修改或删除。',
             db_card,
         )
         db_desc.setWordWrap(True)
@@ -200,21 +210,23 @@ class SettingPage(QWidget):
 
         db_row = QHBoxLayout()
         db_row.setSpacing(10)
-        self.db_edit = LineEdit(db_card)
-        self.db_edit.setPlaceholderText('选择 E-Hentai 收藏数据库文件（*.db）')
-        self.db_edit.setClearButtonEnabled(True)
-        db_row.addWidget(self.db_edit, 1)
-        browse_btn = ToolButton(FluentIcon.FOLDER, db_card)
-        browse_btn.setToolTip('选择数据库文件')
-        browse_btn.clicked.connect(self._choose_db_file)
-        db_row.addWidget(browse_btn)
+        self.db_path_edit = LineEdit(db_card)
+        self.db_path_edit.setReadOnly(True)
+        self.db_path_edit.setPlaceholderText('统一数据库路径')
+        db_row.addWidget(self.db_path_edit, 1)
+        locate_btn = ToolButton(FluentIcon.FOLDER, db_card)
+        locate_btn.setToolTip('在资源管理器中定位数据库文件')
+        locate_btn.clicked.connect(self._open_unified_db_folder)
+        db_row.addWidget(locate_btn)
         db_layout.addLayout(db_row)
 
         apply_row = QHBoxLayout()
         apply_row.addStretch(1)
-        self.apply_db_btn = PrimaryPushButton(FluentIcon.SYNC, '应用并刷新收藏', db_card)
-        self.apply_db_btn.clicked.connect(self._apply_db_file)
-        apply_row.addWidget(self.apply_db_btn)
+        self.import_db_btn = PrimaryPushButton(FluentIcon.SYNC, '导入外部数据库…', db_card)
+        self.import_db_btn.setToolTip(
+            '把另一个 .db 文件里的收藏/下载记录/历史合并进统一数据库（不修改该文件）')
+        self.import_db_btn.clicked.connect(self._import_db_file)
+        apply_row.addWidget(self.import_db_btn)
         db_layout.addLayout(apply_row)
 
         root_layout.addWidget(db_card)
@@ -360,50 +372,66 @@ class SettingPage(QWidget):
         self._load_settings()
 
     # ------------------------------------------------------------------
-    # 数据库文件
+    # 数据库（已与账号库统一，不再可切换）
     # ------------------------------------------------------------------
-    def _choose_db_file(self) -> None:
-        current = self.db_edit.text().strip()
-        start_dir = str(Path(current).parent) if current else str(CFG.data / 'ehentai')
+    def _unified_db_path(self) -> str:
+        try:
+            from core.database import get_db_path
+            return get_db_path()
+        except Exception:
+            return str(CFG.data / 'ogc_users.db')
+
+    def _import_db_file(self) -> None:
+        """把外部数据库（如 EhViewer_PC 的 app_db.db）里的数据并进统一库。
+
+        以前这里是"切换收藏数据库"：选另一个 .db 就整站换库。数据库统一后不再
+        切换 —— 而是把外部库里的收藏/下载记录/历史**合并**进唯一的那一个库，
+        外部文件本身不动（不删不改名，那是用户自己的文件）。
+        """
+        dbp = self._unified_db_path()
+        start_dir = str(Path(dbp).parent) if dbp else str(CFG.data)
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            '选择 E-Hentai 收藏数据库文件',
+            '选择要导入的数据库文件',
             start_dir,
             'SQLite 数据库 (*.db);;所有文件 (*)',
         )
-        if file_path:
-            self.db_edit.setText(file_path)
+        if not file_path:
+            return
+        if not Path(file_path).is_file():
+            InfoBar.error('文件不存在', f'未找到：{file_path}', parent=self,
+                          position=InfoBarPosition.TOP, duration=4000)
+            return
+        try:
+            from core import db_unify
+            r = db_unify.merge_database(file_path, target_path=dbp,
+                                       rename_source=False)
+        except Exception as e:
+            r = {'ok': False, 'error': str(e), 'moved': 0, 'tables': {}}
+        if r.get('ok'):
+            detail = '、'.join(f'{k} {v} 行' for k, v in (r.get('tables') or {}).items()
+                               if v) or '没有新增记录（数据已存在）'
+            InfoBar.success(
+                '导入完成',
+                f'共合并 {r.get("moved", 0)} 行到统一数据库：{detail}',
+                parent=self, position=InfoBarPosition.TOP, duration=5000)
+            self.db_file_changed.emit(dbp)
+        else:
+            InfoBar.error('导入失败', str(r.get('error') or '未知错误'), parent=self,
+                          position=InfoBarPosition.TOP, duration=5000)
 
-    def _apply_db_file(self) -> None:
-        path = self.db_edit.text().strip()
-        if not path:
-            InfoBar.warning(
-                '提示',
-                '请先选择数据库文件。',
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=3000,
-            )
-            return
-        if not Path(path).is_file():
-            InfoBar.error(
-                '文件不存在',
-                f'未找到：{path}',
-                parent=self,
-                position=InfoBarPosition.TOP,
-                duration=4000,
-            )
-            return
-        ehentai_cfg.set(ehentai_cfg.KEY_DB_PATH, path)
-        self.db_edit.setText(path)
-        self.db_file_changed.emit(path)
-        InfoBar.success(
-            '已应用',
-            f'数据库已切换：{path}\n「我的收藏」数据已更新。',
-            parent=self,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-        )
+    def _open_unified_db_folder(self) -> None:
+        """在资源管理器里定位统一数据库文件。"""
+        try:
+            import subprocess
+            path = self._unified_db_path()
+            if os.path.isfile(path):
+                subprocess.Popen(['explorer', '/select,', path])
+            else:
+                os.startfile(os.path.dirname(path))
+        except Exception as e:
+            InfoBar.error('打开失败', str(e), parent=self,
+                          position=InfoBarPosition.TOP, duration=3000)
 
     # ------------------------------------------------------------------
     # 常规设置
@@ -465,7 +493,7 @@ class SettingPage(QWidget):
         root_layout.addWidget(card)
 
     def _load_settings(self) -> None:
-        self.db_edit.setText(ehentai_cfg.get(ehentai_cfg.KEY_DB_PATH, ''))
+        self.db_path_edit.setText(self._unified_db_path())
         self.proxy_edit.setText(ehentai_cfg.get(ehentai_cfg.KEY_PROXY, ''))
         self.ignore_env_switch.setChecked(
             bool(ehentai_cfg.get(ehentai_cfg.KEY_IGNORE_ENV_PROXY, True)))
@@ -498,8 +526,8 @@ class SettingPage(QWidget):
         ehentai_cfg.set(ehentai_cfg.KEY_HEADERS, self.headers_edit.toPlainText().strip())
         ehentai_cfg.save()
 
-        # 同步数据库输入框
-        self.db_edit.setText(ehentai_cfg.get(ehentai_cfg.KEY_DB_PATH, ''))
+        # 数据库已统一：路径只读展示，不随保存变化
+        self.db_path_edit.setText(self._unified_db_path())
 
         self.settings_saved.emit()
 

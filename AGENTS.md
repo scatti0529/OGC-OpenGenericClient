@@ -86,9 +86,11 @@ ehviewer/            EhViewer 核心移植
 resources/           config.json 默认配置、i18n、fonts、images、qss
 scripts/             开发与回归脚本（smoke_* / verify_* / dbg_* / test_*）
 data/                **小体积、不可再生**：索引 JSON、配置、数据库、7Z、avatars —— **不进仓库**
+  data/ogc_users.db         **唯一的数据库**（账号+权限+音乐+JM+抖音+E-Hentai 收藏/下载/历史）
   data/thumb_index.json     缩略图索引        data/dir_cache/        目录扫描索引
-  data/offline_index/       漫画离线索引      data/ehentai/app_db.db EhViewer 数据库
-  data/7Z/  data/avatars/   解压器 / 头像     data/_migration_backup_*/  迁移备份（可删）
+  data/offline_index/       漫画离线索引      data/7Z/  data/avatars/  解压器 / 头像
+  data/*.merged-<时间戳>     旧数据库留档（合并后改名，确认无误可删）
+  data/_migration_backup_*/  迁移备份（可删）
 logs/                运行日志 ——**不进仓库**
 tests/               空占位目录（只有 `__init__.py`）；真实回归都在 `scripts/`
 
@@ -199,11 +201,38 @@ perms['features'].get('video_douyin', True)  # 功能级
 
 ### 4.6 数据库
 
+> 🎯 **全程序只有一个 SQLite 文件**：`data/ogc_users.db`（冻结时 `%APPDATA%\OGC-OpenGenericClient\ogc_users.db`）。
+> 历史上 E-Hentai 用的是**另一个**文件 `data/ehentai/app_db.db`，于是账号库与收藏/下载记录分家 ——
+> 卸载向导只备份得到一个、换机只带走一个就会丢另一半。2026-09 已合并（用户明确要求）。
+
+- **表结构只有一个真源**：`core/database.py::EHENTAI_DDL`（E-Hentai 的 10 张表：
+  `DOWNLOADS` / `DOWNLOAD_LABELS` / `DOWNLOAD_DIRNAME` / `HISTORY` / `LOCAL_FAVORITES` /
+  `QUICK_SEARCH` / `FILTER` / `Gallery_Tags` / `Black_List` / `BOOKMARKS`）。
+  `ehviewer/db.py` 从这里 `import`，**不要再抄一份 DDL**。
+- **首次启动就建全结构**：`init_db()` 依次建账号表 + `init_jmcomic_tables()` +
+  `init_usage_table()` + `init_ehentai_tables()` + `init_pixiv_tokens_table()` +
+  `init_music_tables()`，最后用 `missing_tables()` 自检并告警。
+  ⚠️ 音乐 / Pixiv 的表以前只在首次用到该功能时才懒创建，会出现"全新安装 → 打开音乐页 →
+  no such table"。新增模块的表**必须**挂进 `init_db()`，并把表名加进 `ALL_TABLES`，
+  否则 `scripts/smoke_unified_db.py` 会失败（这是它的用途）。
+- 取数据库路径：应用代码用 `core.database.get_db_path()`；E-Hentai 侧用
+  `ehviewer.db.get_db_path()`（默认同一个文件，测试可临时指向副本）。
+  **不要**再引入 `KEY_DB_PATH` 之类的"第二个库"设置项。
+- **旧库合并**：`core/db_unify.py` 在启动时（`init_db()` 之后）把 `ehentai/app_db.db`、
+  `<程序目录>/app_db.db`、`<程序目录>/ehviewer/app_db.db` 里的数据搬进统一库，
+  然后把旧文件改名成 `*.merged-<时间戳>` **留档不删除**（改名本身就是幂等标记）。
+  合并是通用的：旧库里有什么表就建什么表、列取交集，所以未知的新表也不会丢。
+  主键冲突时 `INSERT OR IGNORE` —— **保留统一库里已有的行**，不会用旧数据覆盖用户当前数据。
 - 文件 `data/ogc_users.db`，启用 **WAL + synchronous=NORMAL**（多线程并发读写的必要前提）。
 - 一律走 `core/database.py` 的函数；页面层**不要**自己 `sqlite3.connect` 写业务表。
 - 每次操作 `get_db_connection()` → `try/finally: conn.close()`；行是 dict 风格（`row['username']`）。
 - 建表/建索引必须幂等（`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`），并容忍「表/列尚不存在」的失败。
 - **内置管理员账号**：`init_db()` 末尾会调用 `ensure_admin_account()`，首次建库时写入 `admin` / `11111111`（`role='管理员'`、全量权限）。该方法**幂等且绝不覆盖已有密码**——只在账号不存在时插入，已存在则仅补齐空的 role/permissions。⚠️ 改动此处务必保住「不重置密码」这条语义，否则每次启动都会把用户改过的密码打回默认值。
+- **冒烟脚本要隔离数据库**：E-Hentai 的脚本会写下载记录/收藏，
+  用 `scripts/_eh_db_testkit.py::use_temp_db()` 拷一份统一库到临时目录再跑
+  （它内部用 `ehdb.set_db_path()` 指过去；`ehentai_sync.db_path()` / 收藏页的
+  `db_path()` 都走 `ehdb.get_db_path()`，所以会一起跟过去）。
+  ⚠️ **应用代码不要调 `set_db_path()`** —— 那会让界面与下载记录读写不同的库。
 
 ### 4.7 下载：只用统一引擎
 
@@ -321,6 +350,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | `smoke_workspace.py` | **工作区标记**：可移植副本与标记生成、**凭据绝不落进下载目录**、全新安装自动还原、已有数据时不擅自动手、拒绝更高 schema、换盘改写索引路径 |
 | `smoke_ffmpeg_setup.py` | **ffmpeg 按需获取**：`ffmpeg_path` 优先级最高、解压→定位→绑定全链路、找不到时优雅降级、弹窗动作与「下次不再显示」、**已可用/不再提示时不弹窗**、缺 ffmpeg 时文件库如实统计跳过的视频数 |
 | `smoke_settings_paths.py` | **设置只留一个下载目录**：旧的 5 张目录卡片与槽函数确实已删、GUI 配置里没有路径项、**音乐缓存/下载都派生自下载根**、播放列表落在可写用户目录、**资源常量指向的文件真实存在**、**打包的图片都被引用（无死素材）** |
+| `smoke_unified_db.py` | **统一数据库**：首次 `init_db()` 就建全 `ALL_TABLES`、`ehviewer.db` 与账号库是同一个文件且写入真的落进去、**旧 app_db.db 能连未知表一起合并**、重复合并幂等、主键冲突保留统一库现有数据、旧库改名留档 |
 | `smoke_test_album.py` | 画册：编译 + 导入 + 无头构建页面 |
 | `smoke_test_ehentai_fix.py` / `smoke_eh_*.py` | E-Hentai：新结构、分页、同步、下载队列、写库、对账 |
 | `smoke_test_easycopy.py` / `smoke_test_readers.py` | 拷贝漫画 / 各阅读器 |
@@ -452,6 +482,18 @@ $env:QT_QPA_PLATFORM = 'offscreen'
     另一条相关：**只给窗口 `setWindowIcon` 不够**，要在 `main.py` 里
     `app.setWindowIcon(...)`，否则没有显式设图标的对话框/EhViewer 子窗口在任务栏里
     是白板图标。
+29. **改图不改 `resource_rc.py` → 界面里还是旧图；而 `pyrcc5` 在非 ASCII 路径下
+    「静默成功」**：`resources/resource_rc.py` 是编译产物（8 MB），登录页的
+    `:/images/logo.png` 走的是它，不是文件系统里的 PNG —— 换图标必须重跑
+    `pyrcc5 resources/resource.qrc -o resources/resource_rc.py`。
+    更坑的是：直接在 `E:\项目程序\...` 下调 `pyrcc5` 会**返回码 1 且什么都不写、不报错**，
+    看起来像"跑了但没变化"；必须经 §7 第 16 条的 ASCII 目录联接
+    （`C:\ogc-src-*\.venv\Scripts\pyrcc5.exe`）才有输出。
+    还有一条连带陷阱：`resource.qrc` 早先**已经过期**（3 个 `<file>` 全指向已移动/已删除的文件），
+    此时"重新生成"会把 `:/images/...` 的资源名一起改掉，导致一堆界面找不到图。
+    正确做法是给每条 `<file>` 加 **`alias`** 锁住资源名，例如
+    `<file alias="images/logo.png">images/logo/logo.png</file>`。
+    误提交了非 ASCII 路径下生成的空/半截 `resource_rc.py`，表现是登录页图标空白。
 
 ---
 
@@ -526,7 +568,10 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | 阶段 | `dist/OGC` | 安装包 | 安装后 |
 |---|---|---|---|
 | 瘦身前 | 220.7 MB | 85.0 MB | 225.0 MB / 428 文件 |
-| 瘦身后 | **211.5 MB** | **82.5 MB** | **215.8 MB / 326 文件** |
+| 瘦身后 | **212.3 MB** / 323 文件 | **82.9 MB** | **216.6 MB / 326 文件** |
+
+（瘦身后这组数已含 512×512 高清图标与随之变大的 `resource_rc.py`；
+换图标会让 `dist/` 与安装包各浮动约 1 MB，属正常。）
 
 `_prune` 只剔**确定用不到**的：Qt 自带翻译（93 个 `*_qm`，只留 `*_zh_CN.qm`，4.9 MB ——
 `FluentTranslator` 读的是 Qt 资源 `:/qfluentwidgets/i18n/*`，全项目没有代码加载 Qt 的翻译）、
@@ -554,13 +599,26 @@ $env:QT_QPA_PLATFORM = 'offscreen'
   而任务栏图标已经变成新图 —— 两边不一致，看起来像"没换成功"。
 - ⚠️ **Pillow 的 ICO 写入器不会把图放大**：源图小于 256×256 时，即使请求了 256×256 也会被
   静默跳过，`.ico` 最大只有 128×128，Windows 在"大图标/超大图标"视图下只能自己拉伸 → 糊。
-  `make_icon()` 因此先 LANCZOS 放大到 256 再生成全部尺寸，并在源图过小时打印提示
-  （本项目源图是 192×192，想更锐利就换一张 ≥256×256 的）。
-- `logo/logo.png` 与 `icon.png` 是**同一张图**（字节相同），保留 `logo.png` 只因为
+  `make_icon()` 因此先 LANCZOS 放大到 256 再生成全部尺寸，并在源图过小时打印提示。
+  本项目源图**已是 512×512**（`icon.png` 即 512 高清图），
+  构建日志会打印实际写出的尺寸列表，正常应为
+  `[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)]`。
+- `logo/logo.png` 与 `icon.png` 是**同一张图**（字节相同、均为 512×512），保留 `logo.png` 只因为
   登录界面的 Qt 资源用的是 `:/images/logo.png`（见 `resources/resource.qrc`）。
   应用图标一律以 `APP_ICON` 为准，别再往 `logo.png` 上引。
 - 校验：`build_exe.py::verify()` 会用 `ExtractIconExW(exe, -1, ...)` 数 exe 里的图标组，
   为 0 就报错（PyInstaller 遇到坏图标会静默忽略，不查就发现不了）。
+- ⚠️ **改动 `icon.png` / `logo.png` 后必须重生成 Qt 资源**：登录界面的图标走的是
+  `:/images/logo.png` 这条 **Qt 资源**，而不是文件系统路径，所以只换 PNG 文件不够 ——
+  还得 `pyrcc5 resources/resource.qrc -o resources/resource_rc.py`，否则界面里仍是旧图
+  （文件图标已新、登录页还旧，看起来像"只换了一半"）。
+  ⚠️ **`pyrcc5` 在非 ASCII 路径下会静默失败**（返回码 1、不写文件、不报错），
+  必须经 §7 第 16 条的 ASCII 目录联接调用：`C:\ogc-src-*\.venv\Scripts\pyrcc5.exe`。
+  另外 `resource.qrc` 里的 `<file>` 必须用 **`alias`** 保持资源名不变
+  （如 `<file alias="images/logo.png">images/logo/logo.png</file>`）——
+  它以前是过期内容，直接"重新生成"会把 `:/images/...` 路径改掉，导致一堆界面找不到图。
+  回归测试：`scripts/smoke_settings_paths.py`（校验资源常量指向的文件真实存在、
+  打包图片无死素材）。
 
 ### 安装 / 卸载行为
 
@@ -586,7 +644,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | `e2e_restore.py` | 装/跑 → 卸载 → **删掉 `%APPDATA%` 模拟全新重装** → 重装同一目录 → 断言索引被逐字节恢复、可移植配置键并回 |
 
 两者都用 Python 传参（本机 pwsh 会把命令行里的中文路径字面量弄坏）。
-实测结论：安装 **215.8 MB / 326 文件**（瘦身后）；`%APPDATA%` 落点正确；安装目录内无可写数据；
+实测结论：安装 **216.6 MB / 326 文件**（瘦身后）；`%APPDATA%` 落点正确；安装目录内无可写数据；
 静默卸载只删程序本体；**重装同一目录后索引与配置自动恢复 ALL PASSED**。
 
 ### 工作区标记（`core/workspace.py`）

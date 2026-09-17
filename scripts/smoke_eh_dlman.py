@@ -16,7 +16,11 @@ app = QApplication.instance() or QApplication(sys.argv)
 
 from ehviewer import db as ehdb, constants as C
 from ehviewer.models import GalleryInfo
-ehdb.set_db_path(os.path.join(BASE, 'data', 'ehentai', 'app_db.db'))
+# 数据库已统一（E-Hentai 表在账号库 ogc_users.db 里）；本脚本会写下载记录，
+# 必须跑在副本上。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+_tmp_dir, _tmp_db = use_temp_db(prefix='ogc_eh_dlman_')
 
 g = GalleryInfo(); g.gid = 999999002; g.token='deadbeef00'; g.title='下载簿记测试'; g.category=C.CAT_MANGA
 mgr = ehdb  # placeholder
@@ -34,3 +38,4 @@ ctx_dm.remove(g.gid, delete_files=False)
 print('after remove: exists =', ehdb.get_download(g.gid) is not None)
 ehdb.delete_history(g.gid)  # 若详情未写历史, 保险清理
 print('DONE (gid=%d)' % g.gid)
+cleanup_temp_db(_tmp_dir)

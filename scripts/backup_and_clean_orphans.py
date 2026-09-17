@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""先备份 app_db.db，再按 DOWNLOAD_DIRNAME 清理真正孤儿（目录已不存在的 DOWNLOADS/DOWNLOAD_DIRNAME 记录）。"""
+"""先备份统一数据库（ogc_users.db），再按 DOWNLOAD_DIRNAME 清理真正孤儿。
+
+⚠️ 数据库已统一：E-Hentai 的 DOWNLOADS / DOWNLOAD_DIRNAME 与账号信息在同一个
+``data/ogc_users.db`` 里（见 core/db_unify.py）。所以本脚本备份并直接修改的是那个库 ——
+这符合"维护脚本操作真实数据"的定位；脚本会先把库复制成 ``<库>.bak_<时间戳>``。"""
 import os, sys, sqlite3, time, shutil
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, BASE)

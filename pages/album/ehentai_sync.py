@@ -19,7 +19,14 @@ INFO_FILENAME = ".ehentai_info.json"
 
 
 def db_path() -> str:
-    return (ehentai_cfg.get(ehentai_cfg.KEY_DB_PATH) or "")
+    """E-Hentai 数据所在的数据库 —— 默认就是与账号库同一个统一库。
+
+    走 ``ehviewer.db.get_db_path()``（而不是直接取 ``core.database.DB_PATH``），
+    这样测试/维护脚本可以用 ``set_db_path()`` 把它临时指到统一库的副本上跑，
+    而应用本身从不切换 —— 见 core/db_unify.py 与 ehviewer/db.py 的说明。
+    """
+    from ehviewer import db as ehdb
+    return ehdb.get_db_path()
 
 
 def download_root() -> str:

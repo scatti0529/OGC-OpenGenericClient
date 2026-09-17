@@ -84,6 +84,22 @@ except Exception as e:
     logger.error(f"数据库初始化失败: {str(e)}", exc_info=True)
     sys.exit(1)
 
+# ── 统一数据库：把历史上分家的旧库并进来 ──
+# E-Hentai 曾经用独立的 data/ehentai/app_db.db，与账号库 ogc_users.db 分家。
+# 现在只有一个库；这里把旧库里的收藏/下载记录/历史一条不落地搬过来，并把旧文件
+# 改名留档（*.merged-<时间戳>，不删除）。必须**在 init_db() 之后**：先把统一库的
+# 完整表结构建好，再往里灌数据。整个流程只读旧库、只增新库，失败也只记日志。
+try:
+    from core import db_unify
+    _legacy = db_unify.merge_legacy_databases()
+    if _legacy['files']:
+        logger.info(f"已合并旧数据库 {len(_legacy['files'])} 个，"
+                    f"共搬移 {_legacy['moved']} 行记录")
+    if _legacy['errors']:
+        logger.warning(f"部分旧数据库未能合并: {_legacy['errors']}")
+except Exception as e:
+    logger.error(f"旧数据库合并失败（不影响启动）: {e}")
+
 # ── 存储布局迁移（一次性、幂等）──
 # 把历史上的大体积缓存（缩略图 / 画廊图片 / 预览图）从 data/ 搬到下载根目录的
 # .cache/，并把散落在下载根目录里的索引 JSON（缩略图索引 / 目录索引 / 离线索引）

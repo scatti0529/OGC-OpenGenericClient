@@ -18,8 +18,12 @@ from ehviewer import db as ehdb
 from ehviewer.models import GalleryInfo
 from ehviewer import constants as C
 
-ogc_db = os.path.join(BASE, 'data', 'ehentai', 'app_db.db')
-ehdb.set_db_path(ogc_db)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _eh_db_testkit import use_temp_db, cleanup_temp_db
+
+# 数据库已统一到账号库 ogc_users.db；本脚本会写下载记录/历史/收藏，
+# 必须跑在副本上，绝不能碰真实数据。
+_tmp, _tmp_db = use_temp_db(prefix='ogc_eh_writes_')
 print('db path =', ehdb.get_db_path())
 
 TEST_GID = 999999001  # 假 gid，测试后删除
@@ -61,3 +65,4 @@ if fid is not None:
     ehdb.delete_blocked_tag(fid)
 
 print('ALL WRITE PATHS OK')
+cleanup_temp_db(_tmp)

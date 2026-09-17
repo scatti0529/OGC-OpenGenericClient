@@ -27,6 +27,8 @@ def wire_ehviewer_subsystem():
 
     注意：不在此设置 ctx.main_window（由宿主 EhentaiPage 设置并提供 show_notify）。
     """
+    # 数据库已统一：route_to_shared_db 会返回统一库路径，并（若旧库还在）
+    # 把旧库数据并进去。这里仍把配置值传给它，仅为兼容用户手工留在配置里的旧路径。
     dbp = ehentai_cfg.get(ehentai_cfg.KEY_DB_PATH) or ""
     route_to_shared_db(dbp)
     sync_ogc_to_ehviewer(ehentai_cfg)
