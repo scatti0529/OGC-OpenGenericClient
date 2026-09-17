@@ -152,7 +152,12 @@ def get_download_root() -> str:
 
 
 def ensure_download_dirs():
-    """启动自检：确保所有平台下载目录及子目录存在"""
+    """启动自检：确保所有平台下载目录、子目录，以及音乐目录存在。
+
+    音乐目录不放进 ``PLATFORM_FOLDERS``：那个表驱动的是"平台 → 目录"映射与
+    各平台的内容分类，音乐不是平台、有自己的子目录结构（缓存走 .cache）。
+    这里显式建，避免污染 PLATFORM_FOLDERS 的语义。
+    """
     root = get_download_root()
     created = []
     for platform, folder in PLATFORM_FOLDERS.items():
@@ -162,6 +167,14 @@ def ensure_download_dirs():
             if not os.path.isdir(d):
                 os.makedirs(d, exist_ok=True)
                 created.append(d)
+    # 音乐：下载目录 + 缓存目录（都由 download_root 派生，见 core.config）
+    for d in (CFG.music_download_dir, CFG.music_cache_dir):
+        if not os.path.isdir(d):
+            try:
+                os.makedirs(d, exist_ok=True)
+                created.append(d)
+            except OSError:
+                pass
     return created
 
 

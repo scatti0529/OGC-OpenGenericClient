@@ -75,6 +75,32 @@ class PlaylistItem:
 
 
 # ── 播放引擎 ─────────────────────────────────────────────
+def playlist_path() -> str:
+    """播放列表 JSON 的路径 —— 必须落在**可写用户目录**（模块级，便于测试）。
+
+    这里曾经写成 ``Path(sys.argv[0]).parent / 'data'``，注释还写着"使用主程序
+    目录，而不是 CFG（可能有误）"。源码模式下它恰好等于项目根的 ``data/``，
+    所以一直没暴露问题；但**冻结后它会变成安装目录**：
+
+        <安装目录>\\data\\playlist.json
+
+    装在 Program Files / %LOCALAPPDATA%\\Programs 时普通用户没有写权限，保存
+    播放列表直接失败（而且是静默失败，用户只看到"列表没保存住"）。
+    现在统一走 ``CFG.data``：源码模式仍落 ``<项目根>/data``（与旧行为一致，
+    老用户的播放列表能继续读到），冻结模式落 ``%APPDATA%\\OGC-OpenGenericClient``。
+    """
+    try:
+        return str(Path(CFG.data) / 'playlist.json')
+    except Exception:
+        # 兜底：绝不能让播放器因为"存不了列表"而起不来
+        base = Path(os.path.expanduser('~')) / '.ogc'
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return str(base / 'playlist.json')
+
+
 class MusicPlayerEngine(QObject):
     """音乐播放引擎 - 核心播放逻辑"""
 
@@ -317,12 +343,8 @@ class MusicPlayerEngine(QObject):
 
     # ── 播放列表持久化 ───────────────────────────────────
     def _get_playlist_path(self) -> str:
-        # 使用主程序目录，而不是CFG（可能有误）
-        import sys
-        base = Path(sys.argv[0]).parent
-        music_dir = base / 'data'
-        music_dir.mkdir(parents=True, exist_ok=True)
-        return str(music_dir / 'playlist.json')
+        """播放列表 JSON 的路径（实现在模块级 playlist_path()，便于测试）。"""
+        return playlist_path()
 
     def _save_playlist(self):
         """保存播放列表到JSON"""
@@ -436,9 +458,13 @@ class MusicPlayerEngine(QObject):
         return f"{m:02d}:{s:02d}"
 
     def get_music_cache_dir(self) -> str:
-        """获取音乐缓存目录"""
-        return CFG.cfg.get('music_cache_path', str(Path(CFG['save_path']) / 'music'))
+        """音乐缓存目录 = ``{下载根}/.cache/music``（由 download_root 派生）。"""
+        return CFG.music_cache_dir
 
     def get_music_download_dir(self) -> str:
-        """获取音乐下载目录"""
-        return CFG.cfg.get('music_download_path', str(Path(CFG['save_path']) / 'music'))
+        """音乐下载目录 = ``{下载根}/music-download``（由 download_root 派生）。
+
+        音乐不再有独立的"缓存目录/下载目录"设置项 —— 用户只需要选一个下载目录，
+        两者都跟着它走（换盘时会一起搬）。
+        """
+        return CFG.music_download_dir

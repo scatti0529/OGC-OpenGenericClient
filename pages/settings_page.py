@@ -1,6 +1,6 @@
 # coding:utf-8
 import os
-from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, FolderListSettingCard,
+from qfluentwidgets import (SettingCardGroup, SwitchSettingCard,
                             OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
                             ComboBoxSettingCard, ExpandLayout, Theme, CustomColorSettingCard,
@@ -9,10 +9,9 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, FolderListSetti
                             PrimaryPushButton, Dialog, BodyLabel)
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import InfoBar, InfoBarPosition
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QStandardPaths
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog, QVBoxLayout, QHBoxLayout, QDialogButtonBox, QDialog
-from pathlib import Path
 from ui.widgets.common import cfg, HELP_URL, FEEDBACK_URL, AUTHOR, VERSION, YEAR, isWin11
 from ui.widgets.common import signalBus, log_manager, CFG
 from ui.widgets.common import StyleSheet
@@ -76,48 +75,22 @@ class SettingInterface(ScrollArea):
         # setting label
         self.settingLabel = QLabel(self.tr("设置"), self)
 
-        # music folders
-        self.musicInThisPCGroup = SettingCardGroup(
-            self.tr("音乐"), self.scrollWidget)
-        self.musicFolderCard = FolderListSettingCard(
-            cfg.musicFolders,
-            self.tr("本地音乐库"),
-            directory=QStandardPaths.writableLocation(
-                QStandardPaths.MusicLocation),
-            parent=self.musicInThisPCGroup
-        )
-        self.downloadFolderCard = PushSettingCard(
-            self.tr('选择文件夹'),
-            FIF.DOWNLOAD,
-            self.tr("下载目录"),
-            cfg.get(cfg.downloadFolder),
-            self.musicInThisPCGroup
-        )
-        self.musicCacheFolderCard = PushSettingCard(
-            self.tr('选择文件夹'),
-            FIF.MUSIC_FOLDER,
-            self.tr("音乐缓存目录"),
-            str(Path(CFG['save_path']) / 'data' / 'musics'),
-            self.musicInThisPCGroup
-        )
-        self.musicDownloadFolderCard = PushSettingCard(
-            self.tr('选择文件夹'),
-            FIF.DOWNLOAD,
-            self.tr("音乐下载目录"),
-            str(Path(CFG['save_path']) / 'data' / 'musics'),
-            self.musicInThisPCGroup
-        )
-        self.videoDownloadRootCard = PushSettingCard(
-            self.tr('选择文件夹'),
-            FIF.VIDEO,
-            self.tr("视频下载根目录"),
-            CFG.get('video_download_root', str(Path(CFG['save_path']) / 'data')),
-            self.musicInThisPCGroup
-        )
-
-        # download optimization
+        # ── 下载：唯一需要用户选择的目录 + 下载行为调优 ──
+        # 刻意**只有一张目录卡片**：过去这里分散着「本地音乐库 / 下载目录 /
+        # 音乐缓存目录 / 音乐下载目录 / 视频下载根目录」五项，用户得同时维护
+        # 好几个路径，还经常出现"音乐下到 A 盘、缓存留在 C 盘"的混乱。
+        # 现在音乐缓存与下载、各平台下载、缓存目录全部从这一个根目录派生
+        # （见 core.config 的 download_root / cache_path / music_*_dir），
+        # 用户只需要选一次。
         self.downloadGroup = SettingCardGroup(
-            self.tr('下载优化'), self.scrollWidget)
+            self.tr('下载'), self.scrollWidget)
+        self.downloadRootCard = PushSettingCard(
+            self.tr('选择文件夹'),
+            FIF.FOLDER,
+            self.tr('下载目录'),
+            CFG.download_root,
+            self.downloadGroup
+        )
         self.downloadModeCard = OptionsSettingCard(
             _cfg.downloadMode,
             FIF.DOWNLOAD,
@@ -444,12 +417,6 @@ class SettingInterface(ScrollArea):
         self.settingLabel.move(36, 30)
 
         # add cards to group
-        self.musicInThisPCGroup.addSettingCard(self.musicFolderCard)
-        self.musicInThisPCGroup.addSettingCard(self.downloadFolderCard)
-        self.musicInThisPCGroup.addSettingCard(self.musicCacheFolderCard)
-        self.musicInThisPCGroup.addSettingCard(self.musicDownloadFolderCard)
-        self.musicInThisPCGroup.addSettingCard(self.videoDownloadRootCard)
-
         self.maintenanceGroup.addSettingCard(self.workspaceCard)
         self.maintenanceGroup.addSettingCard(self.userDataCard)
         self.maintenanceGroup.addSettingCard(self.uninstallCard)
@@ -457,6 +424,7 @@ class SettingInterface(ScrollArea):
         self.toolGroup.addSettingCard(self.ffmpegPickCard)
         self.toolGroup.addSettingCard(self.ffmpegClearCard)
 
+        self.downloadGroup.addSettingCard(self.downloadRootCard)
         self.downloadGroup.addSettingCard(self.downloadModeCard)
         self.downloadGroup.addSettingCard(self.downloadMaxThreadsCard)
         self.downloadGroup.addSettingCard(self.downloadThresholdCard)
@@ -485,7 +453,6 @@ class SettingInterface(ScrollArea):
         # add setting card group to layout
         self.expandLayout.setSpacing(28)
         self.expandLayout.setContentsMargins(36, 10, 36, 0)
-        self.expandLayout.addWidget(self.musicInThisPCGroup)
         self.expandLayout.addWidget(self.downloadGroup)
         self.expandLayout.addWidget(self.personalGroup)
         self.expandLayout.addWidget(self.materialGroup)
@@ -509,37 +476,21 @@ class SettingInterface(ScrollArea):
             parent=self
         )
 
-    def __onDownloadFolderCardClicked(self):
-        """ download folder card clicked slot """
-        folder = QFileDialog.getExistingDirectory(
-            self, self.tr("选择文件夹"), "./")
-        if not folder or cfg.get(cfg.downloadFolder) == folder:
-            return
+    def __onDownloadRootCardClicked(self):
+        """下载目录选择 —— 全程序**唯一**需要用户选的目录。
 
-        cfg.set(cfg.downloadFolder, folder)
-        self.downloadFolderCard.setContent(folder)
-
-    def __onMusicCacheFolderCardClicked(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择音乐缓存目录", "./")
+        各平台下载（``*-download``）、音乐下载（``music-download``）、音乐缓存
+        （``.cache/music``）以及所有缩略图/画廊缓存都从这个根目录派生，
+        所以改这里等于一次把"东西放哪"全部改好。
+        """
+        folder = QFileDialog.getExistingDirectory(self, "选择下载目录", "./")
         if not folder:
             return
-        CFG['music_cache_path'] = folder
-        self.musicCacheFolderCard.setContent(folder)
-
-    def __onMusicDownloadFolderCardClicked(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择音乐下载目录", "./")
-        if not folder:
-            return
-        CFG['music_download_path'] = folder
-        self.musicDownloadFolderCard.setContent(folder)
-
-    def __onVideoDownloadRootCardClicked(self):
-        """视频下载根目录选择"""
-        folder = QFileDialog.getExistingDirectory(self, "选择视频下载根目录", "./")
-        if not folder:
+        if os.path.normcase(os.path.abspath(folder)) == \
+                os.path.normcase(os.path.abspath(CFG.download_root)):
             return
         CFG['video_download_root'] = folder
-        self.videoDownloadRootCard.setContent(folder)
+        self.refresh_download_root()
         # 换了下载根目录 → 工作区标记与可移植索引副本要跟着搬到新目录，
         # 否则重装后在新目录里找不到工作区、恢复不了索引。
         # 复制几 MB 索引，放后台线程，别卡住设置页。
@@ -559,32 +510,48 @@ class SettingInterface(ScrollArea):
         except Exception:
             pass
         self.refresh_maintenance()
-        # 重新创建平台子目录
+        # 在新目录下重建各平台子目录 + 音乐目录
         try:
             from services.download_manager import ensure_download_dirs
             ensure_download_dirs()
             InfoBar.success(
-                title="目录已更新",
-                content="已在所选目录下创建各平台下载文件夹",
+                title="下载目录已更新",
+                content="已在新目录下创建各平台下载文件夹与音乐目录",
                 orient=Qt.Horizontal, isClosable=True,
                 position=InfoBarPosition.TOP, duration=3000, parent=self
             )
         except Exception:
             pass
 
+    def refresh_download_root(self):
+        """刷新「下载目录」卡片：显示解析后的根目录与各类内容的落点。
+
+        异常一律吞掉 —— 显示不出来是小事，设置页打不开是大事。
+        """
+        try:
+            root = CFG.download_root
+            try:
+                music = CFG.music_download_dir
+                cache = CFG.music_cache_dir
+                self.downloadRootCard.setContent(
+                    f"{root}　·　音乐 → {os.path.basename(music)}，"
+                    f"缓存 → {os.path.basename(os.path.dirname(cache))}"
+                    f"/{os.path.basename(cache)}")
+            except Exception:
+                self.downloadRootCard.setContent(root)
+        except Exception:
+            try:
+                self.downloadRootCard.setContent('状态读取失败')
+            except Exception:
+                pass
+
     def __connectSignalToSlot(self):
         """ connect signal to slot """
         cfg.appRestartSig.connect(self.__showRestartTooltip)
 
-        # music in the pc
-        self.downloadFolderCard.clicked.connect(
-            self.__onDownloadFolderCardClicked)
-        self.musicCacheFolderCard.clicked.connect(
-            self.__onMusicCacheFolderCardClicked)
-        self.musicDownloadFolderCard.clicked.connect(
-            self.__onMusicDownloadFolderCardClicked)
-        self.videoDownloadRootCard.clicked.connect(
-            self.__onVideoDownloadRootCardClicked)
+        # 下载目录（唯一目录设置项）
+        self.downloadRootCard.clicked.connect(
+            self.__onDownloadRootCardClicked)
 
         # personalization
         cfg.themeChanged.connect(setTheme)
@@ -633,11 +600,9 @@ class SettingInterface(ScrollArea):
             lambda: QDesktopServices.openUrl(QUrl(FEEDBACK_URL)))
 
         # ── 其余设置卡片悬停功能简介 ──
-        install_hover_tip(self.musicFolderCard, "本地音乐库", "管理本地音乐文件夹，播放器自动扫描并索引其中的音乐文件")
-        install_hover_tip(self.downloadFolderCard, "下载目录", "设置音乐等资源的默认下载保存位置")
-        install_hover_tip(self.musicCacheFolderCard, "音乐缓存目录", "设置音乐播放缓存的存放位置")
-        install_hover_tip(self.musicDownloadFolderCard, "音乐下载目录", "设置音乐下载的保存位置")
-        install_hover_tip(self.videoDownloadRootCard, "视频下载根目录", "设置视频下载的根目录，各平台自动创建子文件夹")
+        install_hover_tip(self.downloadRootCard, "下载目录",
+                          "全程序唯一需要选的目录：各平台下载、音乐下载与缓存、缩略图缓存都在它下面")
+        self.refresh_download_root()
         install_hover_tip(self.themeColorCard, "主题颜色", "自定义应用的主题强调色")
         install_hover_tip(self.blurRadiusCard, "云母模糊半径", "调整云母背景的模糊程度，半径越大越模糊")
         install_hover_tip(self.operationLogCard, "操作日志路径", "设置操作日志的保存路径")

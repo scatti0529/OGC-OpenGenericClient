@@ -176,17 +176,16 @@ def isWin11():
 
 
 class Config(QConfig):
-    """应用配置（基于 qfluentwidgets）"""
+    """应用配置（基于 qfluentwidgets）
 
-    # folders
-    musicFolders = ConfigItem("Folders", "LocalMusic", [], FolderListValidator())
-    # ⚠️ 默认值必须指向**真正的下载根目录**，且必须是绝对路径。
-    # 这里原先沿用 app.* 时代的相对路径 "app/download"，配合 FolderValidator 的
-    # Path(value).mkdir() 会在**当前工作目录**下自动创建 app/download/ —— 每运行
-    # 一次程序（或任何 import ui.widgets.common 的脚本）就把已删掉的 app/ 重新
-    # 长出来，位置还随 cwd 漂移。现在统一取 core.config 的权威下载根目录。
-    downloadFolder = ConfigItem(
-        "Folders", "Download", CFG.download_root, FolderValidator())
+    ⚠️ 这里**刻意不再有** ``musicFolders``（本地音乐库）与 ``downloadFolder``：
+    它们只有设置页在用，而设置页现在只暴露**一个**下载目录（``CFG.download_root``，
+    落 ``data/config.json``）。路径类配置分散两处是历史遗留的坑 —— 曾经
+    ``downloadFolder`` 默认值是相对路径 ``app/download``，配合 FolderValidator 的
+    ``Path(value).mkdir()`` 会在当前工作目录反复长出 ``app/``。现在目录只有一个真源：
+    ``core.config.ConfigManager.download_root``。残留的 ``Folders/*`` 键在
+    gui-config.json 里会被忽略，无害。
+    """
 
     # main window
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())

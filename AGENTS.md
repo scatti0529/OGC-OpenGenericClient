@@ -237,8 +237,20 @@ from core.config import config as CFG
 CFG.download_root                     # 下载根目录（权威解析 + 自动创建）
 CFG.cache_path('ehentai', 'cache')    # {下载根}/.cache/...  大体积可再生的缓存
 CFG.offline_index_path('easycopy')    # data/offline_index/... 索引（小体积不可再生）
+CFG.music_download_dir                # {下载根}/music-download（派生，不是配置项）
+CFG.music_cache_dir                   # {下载根}/.cache/music（派生，不是配置项）
 CFG.set_root(项目根)                   # 仅维护脚本需要（见下）
 ```
+
+> 🎯 **设置里只有「一个下载目录」是用户可见的目录选项**（用户明确要求）。
+> 历史上这里分散着五项 —— 本地音乐库 / 下载目录 / 音乐缓存目录 / 音乐下载目录 /
+> 视频下载根目录 —— 用户得同时维护好几个路径，还常常出现"音乐下到 A 盘、缓存在 C 盘"。
+> 现在**音乐不再有目录配置**：`music_cache_path` / `music_download_path` 两个键已删除，
+> 一律由 `download_root` 派生（见上面两个属性）。
+> 老配置里残留的这两个键**不再被读取**，其内容由
+> `core/storage_migration.py::_migrate_music_dirs` 一次性搬进新位置。
+> 回归测试：`scripts/smoke_settings_paths.py`。
+> ⚠️ 别再加回"某个模块自己的目录设置" —— 那正是这次要收敛掉的东西。
 
 判断新文件该放哪，只问一句：**丢了能不能重新生成？**
 
@@ -308,6 +320,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | `smoke_storage_layout.py` | **存储布局**：缓存只在 `{下载根}/.cache`、索引只在 `data/`、缓存不出现在文件库列表、迁移幂等与去重/冲突规则、**冻结模式可写数据不落安装目录**、**子进程探针校验"可写路径常量"来自 `user_dir()`** |
 | `smoke_workspace.py` | **工作区标记**：可移植副本与标记生成、**凭据绝不落进下载目录**、全新安装自动还原、已有数据时不擅自动手、拒绝更高 schema、换盘改写索引路径 |
 | `smoke_ffmpeg_setup.py` | **ffmpeg 按需获取**：`ffmpeg_path` 优先级最高、解压→定位→绑定全链路、找不到时优雅降级、弹窗动作与「下次不再显示」、**已可用/不再提示时不弹窗**、缺 ffmpeg 时文件库如实统计跳过的视频数 |
+| `smoke_settings_paths.py` | **设置只留一个下载目录**：旧的 5 张目录卡片与槽函数确实已删、GUI 配置里没有路径项、**音乐缓存/下载都派生自下载根**、播放列表落在可写用户目录、**资源常量指向的文件真实存在**、**打包的图片都被引用（无死素材）** |
 | `smoke_test_album.py` | 画册：编译 + 导入 + 无头构建页面 |
 | `smoke_test_ehentai_fix.py` / `smoke_eh_*.py` | E-Hentai：新结构、分页、同步、下载队列、写库、对账 |
 | `smoke_test_easycopy.py` / `smoke_test_readers.py` | 拷贝漫画 / 各阅读器 |
@@ -420,6 +433,17 @@ $env:QT_QPA_PLATFORM = 'offscreen'
     （页面 → 其所在窗口 → `QApplication.activeWindow()`），解析不到就**放弃弹窗并记日志**，
     绝不能让"提示用户"这件事本身把页面搞崩（参考
     `ui/widgets/ffmpeg_prompt.py::_need_dialog_parent`）。
+27. **`sys.argv[0]` 推路径的"运行时"代码同样会写进安装目录**（第 22 条的姊妹坑，
+    但更隐蔽 —— 第 22 条是 import 期定死的常量，这条是**调用期**算出来的）：
+    `pages/music/music_player_engine.py::_get_playlist_path` 原实现是
+    ``Path(sys.argv[0]).parent / 'data'``，注释还写着"使用主程序目录，而不是 CFG
+    （可能有误）"。源码模式下它恰好等于项目根的 `data/`，所以**多年都没暴露**；
+    冻结后 `sys.argv[0]` 是 exe，路径变成 ``<安装目录>\data\playlist.json`` ——
+    装在 Program Files 时普通用户无写权限，保存播放列表**静默失败**。
+    现已改为模块级 `playlist_path()`（走 `CFG.data`），并且
+    `smoke_storage_layout.py` 的**冻结子进程探针**会断言它落在 `user_dir()` 下。
+    同类风险点排查口诀：**任何 `sys.argv[0]` / `sys.executable` / `__file__`
+    参与拼出来的可写路径，都要问一句"冻结后这指向哪"。**
 
 ---
 
@@ -488,7 +512,24 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 
 工具链：PyInstaller 6.22.3（装在源码 `.venv`）、Inno Setup 6.7.3 +
 `Languages\ChineseSimplified.isl`（含非 ASCII 的 .iss 必须存成 **UTF-8 with BOM**）。
-实测体积：`dist/OGC` 222.6 MB → 安装器 86.9 MB。
+
+### 产物体积与瘦身（`OGC.spec` 的 `_prune`）
+
+| 阶段 | `dist/OGC` | 安装包 | 安装后 |
+|---|---|---|---|
+| 瘦身前 | 220.7 MB | 85.0 MB | 225.0 MB / 428 文件 |
+| 瘦身后 | **211.5 MB** | **82.5 MB** | **215.8 MB / 326 文件** |
+
+`_prune` 只剔**确定用不到**的：Qt 自带翻译（93 个 `*_qm`，只留 `*_zh_CN.qm`，4.9 MB ——
+`FluentTranslator` 读的是 Qt 资源 `:/qfluentwidgets/i18n/*`，全项目没有代码加载 Qt 的翻译）、
+`resources/**/__pycache__`（1.8 MB）、`qwebgl.dll`（0.46 MB）、未引用素材（1.9 MB）。
+构建日志会打印省下多少，`build_exe.py::verify()` 会核对结果（翻译剩几个、有没有死重量、
+被引用的素材在不在）。
+
+> ⚠️ **刻意没动的三大块**：`opengl32sw.dll`（20 MB，Qt 软件 OpenGL 兜底 ——
+> **远程桌面 / 虚拟机 / 无显卡驱动的机器靠它才能启动**）、ANGLE（约 7 MB，Qt5 在 Windows 的
+> 默认 GL 后端）、`Qt5Qml.dll`+`Qt5Quick.dll`（约 8 MB）。合计约 35 MB，但删错的表现是
+> "在别人的机器上启动失败"，本机验证不出来 —— 要删必须换台机器实测。
 
 ### 安装 / 卸载行为
 
@@ -514,7 +555,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 | `e2e_restore.py` | 装/跑 → 卸载 → **删掉 `%APPDATA%` 模拟全新重装** → 重装同一目录 → 断言索引被逐字节恢复、可移植配置键并回 |
 
 两者都用 Python 传参（本机 pwsh 会把命令行里的中文路径字面量弄坏）。
-实测结论：安装 225 MB / 428 文件；`%APPDATA%` 落点正确；安装目录内无可写数据；
+实测结论：安装 **215.8 MB / 326 文件**（瘦身后）；`%APPDATA%` 落点正确；安装目录内无可写数据；
 静默卸载只删程序本体；**重装同一目录后索引与配置自动恢复 ALL PASSED**。
 
 ### 工作区标记（`core/workspace.py`）

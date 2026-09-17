@@ -89,10 +89,10 @@ def user_log_dir() -> Path:
     return program_dir() / 'logs'
 
 
-def user_music_dir() -> Path:
-    if is_frozen():
-        return user_dir() / 'music'
-    return program_dir() / 'music'
+# 说明：曾经这里还有 user_music_dir()（<用户目录>/music）。音乐目录现在
+# **统一由下载根目录派生**（{下载根}/music-download 与 {下载根}/.cache/music，
+# 见 core.config 的 music_download_dir / music_cache_dir），因此不再需要它，
+# 也避免出现"音乐到底放哪"的第二份答案。
 
 
 def bundled(*parts) -> str:
@@ -147,9 +147,13 @@ def gui_config_path() -> str:
 
 
 def ensure_user_dirs() -> Path:
-    """创建用户数据子目录（幂等）。首次启动与设置变更后都可调用。"""
+    """创建用户数据子目录（幂等）。首次启动与设置变更后都可调用。
+
+    注意这里**不建 music/**：音乐目录跟着下载根目录走（见 user_music_dir 处的
+    说明），不再占用用户数据目录。
+    """
     d = user_dir()
-    for sub in ('', 'logs', 'music', 'avatars', 'dir_cache', 'offline_index'):
+    for sub in ('', 'logs', 'avatars', 'dir_cache', 'offline_index'):
         try:
             (d / sub).mkdir(parents=True, exist_ok=True)
         except OSError:

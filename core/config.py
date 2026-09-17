@@ -41,6 +41,14 @@ CACHE_DIR_NAME = '.cache'
 # 离线索引（漫画/画廊扫描结果 JSON）在 data/ 下的子目录名
 INDEX_DIR_NAME = 'offline_index'
 
+# 音乐下载目录名（放在下载根目录下，与其它 *-download 平台目录同级）
+# 音乐**不再单独配置目录**：缓存与下载都从 download_root 派生，见
+# ConfigManager.music_cache_dir / music_download_dir。用户只需要选一个下载目录。
+MUSIC_DOWNLOAD_DIR_NAME = 'music-download'
+
+# 音乐缓存在 {下载根}/.cache 下的子目录名
+MUSIC_CACHE_DIR_NAME = 'music'
+
 # 用户可见的下载目录名（放在系统「下载」目录下）
 APP_NAME_FOLDER = 'OGC-OpenGenericClient'
 
@@ -112,7 +120,6 @@ class ConfigManager:
 
         self.root = _paths.program_dir()
         self.data = _paths.user_dir()
-        self.music_dir = _paths.user_music_dir()
         self.logs_dir = _paths.user_log_dir()
         self.cfg_file = self.data / 'config.json'
 
@@ -150,8 +157,12 @@ class ConfigManager:
             # 兼容旧配置键（旧代码 video_page/settings_page 仍会引用，保持向后兼容）
             'video_save_path': str(self.data / 'videos'),
             'temp_video_save_path': str(self.data / 'temp_videos'),
-            'music_cache_path': str(self.music_dir),
-            'music_download_path': str(self.music_dir),
+            # ⚠️ 这里**刻意没有** music_cache_path / music_download_path：
+            # 音乐目录不再单独配置，一律由 download_root 派生
+            # （见 music_cache_dir / music_download_dir 两个属性）。
+            # 用户只需要在设置里选**一个**下载目录，缓存与下载自动归位。
+            # 老配置里可能残留这两个键 —— 启动时由 core.storage_migration
+            # 把里面的文件搬到新位置，之后就不再被读取。
             # 下载优化配置
             'download_max_threads': 8,           # 并发分块下载线程数
             'download_parallel_threshold': 20,   # 大文件并发分块阈值 (MB)
@@ -255,11 +266,10 @@ class ConfigManager:
         """
         self.root = Path(root)
         self.data = self.root / 'data'
-        self.music_dir = self.root / 'music'
         self.logs_dir = self.root / 'logs'
         self.cfg_file = self.data / 'config.json'
         self._download_root_cache = None
-        for d in (self.data, self.logs_dir, self.music_dir):
+        for d in (self.data, self.logs_dir):
             try:
                 d.mkdir(parents=True, exist_ok=True)
             except OSError:
@@ -334,6 +344,30 @@ class ConfigManager:
         except OSError:
             pass
         return os.path.join(d, f'{platform}_offline_index.json')
+
+    # ---------- 音乐目录（从 download_root 派生，**不再单独配置**） ----------
+    @property
+    def music_cache_dir(self) -> str:
+        """音乐缓存目录 = ``{下载根}/.cache/music``。
+
+        为什么跟着下载根走：音乐缓存与下载都在同一个大容量盘上最自然，
+        换盘时一起搬走；也让设置里只需要"选一个下载目录"。
+        """
+        return self.cache_path(MUSIC_CACHE_DIR_NAME)
+
+    @property
+    def music_download_dir(self) -> str:
+        """音乐下载目录 = ``{下载根}/music-download``。
+
+        命名与其它平台目录（``douyin-download`` / ``pixiv-download`` …）保持一致，
+        用户在资源管理器里一眼能看出这是本程序下载的音乐。
+        """
+        d = os.path.join(self.download_root, MUSIC_DOWNLOAD_DIR_NAME)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+        return d
 
 
 # 全局配置单例

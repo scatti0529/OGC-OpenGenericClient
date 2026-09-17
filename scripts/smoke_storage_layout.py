@@ -100,11 +100,19 @@ def test_caches_live_in_download_root():
         ('EH 封面', COVER_DIR),
         ('easycopy 图片缓存', default_cache_dir()),
         ('阅读临时缓存', READER_CACHE_DIR),
+        ('音乐缓存', CFG.music_cache_dir),
     ]
     for label, path in pairs:
         assert _under(path, cache_root), f'{label} 应在 {cache_root} 下，实际 {path}'
         if _download_root_differs_from_data():
             assert not _under(path, CFG.data), f'{label} 不应留在 data/ 里: {path}'
+
+    # 音乐下载目录跟着下载根走（不再单独配置）——这是"设置里只需要选一个目录"的关键
+    music_dl = CFG.music_download_dir
+    assert _under(music_dl, CFG.download_root), \
+        f'音乐下载目录应在下载根目录下，实际 {music_dl}'
+    assert os.path.basename(_norm(music_dl)) == 'music-download'
+    assert not _under(music_dl, cache_root), '音乐下载目录不该混进缓存目录'
 
 
 def test_indexes_live_in_data():
@@ -192,8 +200,7 @@ def test_frozen_path_split():
         assert _under(P.user_dir(), fake_roaming)
         # 核心不变量：任何可写目录都不许落在安装目录里
         for name, p in (('user_dir', P.user_dir()),
-                        ('user_log_dir', P.user_log_dir()),
-                        ('user_music_dir', P.user_music_dir())):
+                        ('user_log_dir', P.user_log_dir())):
             assert not _under(p, P.program_dir()), \
                 f'{name} 落在安装目录内，装到 Program Files 会写失败: {p}'
         # 资源与安装目录不是一回事
@@ -264,6 +271,11 @@ try:
     out['reader_window.PROGRESS_PATH'] = PROGRESS_PATH
 except Exception as e:
     out['reader_window.PROGRESS_PATH'] = 'IMPORT-ERROR: %s' % e
+try:
+    from pages.music.music_player_engine import playlist_path
+    out['music.playlist_path'] = playlist_path()
+except Exception as e:
+    out['music.playlist_path'] = 'IMPORT-ERROR: %s' % e
 
 print('PROBE' + json.dumps(out, ensure_ascii=False))
 '''
@@ -345,13 +357,28 @@ def test_frozen_writable_constants_follow_user_dir():
 # ═══════════════ 5. 迁移演练（幂等 + 真的搬对了） ═══════════════
 
 class _StubCfg:
-    """给迁移模块用的最小配置桩（避免动真实 data/）。"""
+    """给迁移模块用的最小配置桩（避免动真实 data/）。
 
-    def __init__(self, data, dl):
+    必须带上 music_cache_dir / music_download_dir / root / cfg ——
+    迁移里的「旧音乐目录 → 新位置」那一步要用它们；少了会静默跳过，
+    等于没测到。这里按 core.config 的真实语义实现（从 dl 派生）。
+    """
+
+    def __init__(self, data, dl, cfg_dict=None):
         self.data = data
+        self.root = os.path.dirname(data.rstrip('\\/')) or data
         self.download_root = dl
         self.cache_dir = os.path.join(dl, '.cache')
+        self.cfg = dict(cfg_dict or {})
         os.makedirs(self.cache_dir, exist_ok=True)
+
+    @property
+    def music_cache_dir(self):
+        return os.path.join(self.cache_dir, 'music')
+
+    @property
+    def music_download_dir(self):
+        return os.path.join(self.download_root, 'music-download')
 
 
 def test_migration_moves_legacy_layout():
@@ -475,6 +502,80 @@ def test_migration_dedupe_and_conflict_rules():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_music_dirs_derived_not_configured():
+    """音乐目录必须是**派生**的：只剩一个「下载目录」需要用户选。
+
+    守住两件事：
+    1. ``music_cache_path`` / ``music_download_path`` 不再作为配置项存在
+       （老配置里残留也不能影响解析结果 —— 否则老用户永远"跟着旧路径走"）；
+    2. 两个目录都落在下载根目录下（缓存进 .cache，下载进 music-download）。
+    """
+    from core.config import (config as CFG, MUSIC_CACHE_DIR_NAME,
+                             MUSIC_DOWNLOAD_DIR_NAME)
+
+    assert 'music_cache_path' not in CFG.default, \
+        'music_cache_path 不该再有默认值（音乐目录统一从下载根派生）'
+    assert 'music_download_path' not in CFG.default, \
+        'music_download_path 不该再有默认值（音乐目录统一从下载根派生）'
+
+    saved = {k: CFG.cfg.get(k) for k in ('music_cache_path', 'music_download_path')}
+    try:
+        # 故意塞入"看起来像配置"的假路径：派生结果必须无视它们
+        CFG.cfg['music_cache_path'] = r'Z:\bogus\music-cache'
+        CFG.cfg['music_download_path'] = r'Z:\bogus\music-download'
+        assert _under(CFG.music_cache_dir, CFG.cache_dir), \
+            f'音乐缓存应派生自下载根，实际 {CFG.music_cache_dir}'
+        assert _under(CFG.music_download_dir, CFG.download_root), \
+            f'音乐下载应派生自下载根，实际 {CFG.music_download_dir}'
+        assert os.path.basename(_norm(CFG.music_cache_dir)) == MUSIC_CACHE_DIR_NAME
+        assert os.path.basename(_norm(CFG.music_download_dir)) == MUSIC_DOWNLOAD_DIR_NAME
+        assert os.path.isdir(CFG.music_cache_dir), '音乐缓存目录应被自动创建'
+        assert os.path.isdir(CFG.music_download_dir), '音乐下载目录应被自动创建'
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                CFG.cfg.pop(k, None)
+            else:
+                CFG.cfg[k] = v
+
+
+def test_migration_moves_legacy_music():
+    """旧音乐目录里的文件要搬进新位置，不能"换个设置歌就没了"。"""
+    import core.config as config_mod
+    from core import storage_migration as SM
+
+    tmp = tempfile.mkdtemp(prefix='ogc-music-')
+    data = os.path.join(tmp, 'data')
+    dl = os.path.join(tmp, 'dl')
+    old_cache = os.path.join(tmp, 'old-music-cache')
+    os.makedirs(os.path.join(data, 'music'), exist_ok=True)
+    os.makedirs(old_cache, exist_ok=True)
+    with open(os.path.join(data, 'music', 'song.mp3'), 'wb') as f:
+        f.write(b'MP3-DATA')
+    with open(os.path.join(old_cache, 'cover.bin'), 'wb') as f:
+        f.write(b'CACHE-DATA')
+
+    original = config_mod.config
+    # 两个旧键指向**不同**目录 → 各归各位
+    config_mod.config = _StubCfg(data, dl, {
+        'music_cache_path': old_cache,
+        'music_download_path': os.path.join(data, 'music'),
+    })
+    try:
+        SM.migrate(force=True)
+        assert os.path.isfile(os.path.join(dl, 'music-download', 'song.mp3')), \
+            '旧 music/ 里的歌应被搬进 {下载根}/music-download'
+        assert os.path.isfile(os.path.join(dl, '.cache', 'music', 'cover.bin')), \
+            '显式配置过的音乐缓存应被搬进 {下载根}/.cache/music'
+        # 幂等：再跑一次不应报错、也不应把文件弄丢
+        SM.migrate(force=True)
+        assert os.path.isfile(os.path.join(dl, 'music-download', 'song.mp3'))
+        assert os.path.isfile(os.path.join(dl, '.cache', 'music', 'cover.bin'))
+    finally:
+        config_mod.config = original
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == '__main__':
     print('=== 存储布局回归测试 ===')
     step('下载根目录按配置解析且已创建', test_download_root_is_configured_and_exists)
@@ -486,6 +587,8 @@ if __name__ == '__main__':
          test_frozen_writable_constants_follow_user_dir)
     step('迁移演练：旧布局 → 新布局（幂等）', test_migration_moves_legacy_layout)
     step('迁移去重/冲突规则', test_migration_dedupe_and_conflict_rules)
+    step('音乐目录由下载根派生（不再单独配置）', test_music_dirs_derived_not_configured)
+    step('迁移：旧音乐目录 → 新位置', test_migration_moves_legacy_music)
     if FAILURES:
         print('STORAGE LAYOUT RESULT: FAILED ->', FAILURES)
         sys.exit(1)

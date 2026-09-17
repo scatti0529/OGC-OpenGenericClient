@@ -56,7 +56,7 @@ NAV_XVIDEO = _img('logo', 'XvideosLogo.png')                      # 视频 → X
 NAV_PIXIV = _img('logo', 'Fa6BrandsPixiv.png')                    # 视频 → Pixiv 导航图标
 NAV_YOUTUBE = _img('logo', 'LogosYoutube.png')                    # 视频 → YouTube 导航图标
 NAV_BILIBILI = _img('logo', 'StreamlineUltimateBilibiliLogoBold.png')  # 视频 → 哔哩哔哩 导航图标
-NAV_PEOPLE_LEVEL = _img('logo', 'zs_common_level.png')            # 人物页面等级图标
+NAV_PEOPLE_LEVEL = _img('logo', 'user_icon.png')                  # 人物页面等级图标
 NAV_EHENTAI = _img('logo', 'EhViewer.png')            # 人物页面等级图标
 NAV_JMCOMIC = _img('logo', 'LogoJM.png')            # 人物页面等级图标
 MAIN_GLASS_BG = _img('background', 'background-2-2.jpg')          # 主窗口全局磨砂背景层
@@ -64,14 +64,12 @@ MAIN_GLASS_BG = _img('background', 'background-2-2.jpg')          # 主窗口全
 # ═══════════════════════════════════════════
 #  首页 (pages/home_page.py)
 # ═══════════════════════════════════════════
-# HOME_ACHIEVEMENT_149 = _img('logo', 'achievement_icon149.png')    # 首页「成就卡片 1」图标
-# HOME_ACHIEVEMENT_150 = _img('logo', 'achievement_icon150.png')    # 首页「成就卡片 2」图标
-# HOME_ACHIEVEMENT_244 = _img('logo', 'achievement_icon244.png')    # 首页「成就卡片 3」图标
-# HOME_ACHIEVEMENT_245 = _img('logo', 'achievement_icon245.png')    # 首页「成就卡片 4」图标
-# HOME_BANNER = _img('photos', 'images', 'header1.png')             # 首页顶部 Banner 横幅图
-# HOME_DOWN_BTN = _img('photos', 'images', 'MJ119_btm.png')         # 首页「下载」装饰按钮图
-# HOME_GIF_1 = _img('photos', 'gif', '1635502638.gif')              # 首页 GIF 轮播图 1
-# HOME_GIF_FOLDER = _img('photos', 'images', 'HOME')                # 首页轮播图文件夹（内含 01.jpg ~ 34.jpg）
+# 首页曾经用下面这些素材，但它们要么早已不在仓库里（photos/gif、MJ119_btm.png），
+# 要么只被注释引用；2026-09 清理时确认首页代码**完全不引用**它们，
+# 于是连同 resources/images/photos/ 一起删掉了（省下约 1.9 MB 安装体积）。
+# 如果以后要给首页加回 Banner/轮播，把素材放进 resources/images/ 后
+# 在这里加常量即可 —— scripts/smoke_settings_paths.py 会校验常量指向的文件
+# 必须真实存在，不会再出现"引用了不存在的图、界面空白却没人发现"。
 
 # ═══════════════════════════════════════════
 #  关于我 (pages/about_page.py)
@@ -105,4 +103,4 @@ VIDEO_PAGE_APP_ICON = _img('logo', 'logo.png')                     # 旧单平�
 # ═══════════════════════════════════════════
 #  音乐播放器 (pages/music/music_player_ui.py)
 # ═══════════════════════════════════════════
-MUSIC_PLAYER_BG = _img('background', 'music_list1.png')            # 音乐播放器页面背景图
+MUSIC_PLAYER_BG = _img('background', 'background-3.jpg')           # 音乐播放器页面背景图

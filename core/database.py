@@ -702,7 +702,8 @@ def get_module_file_counts() -> dict:
 
     下载根目录 = services.download_manager.get_download_root()，
     各平台目录形如 douyin-download / bilibili-download / jmcomic-download /
-    easycopy-download；E-Hentai 读配置 ehentai.output_dir；音乐读 music_download_path。
+    easycopy-download；E-Hentai 读配置 ehentai.output_dir；
+    音乐取 ``CFG.music_download_dir``（= {下载根}/music-download，派生而非配置）。
 
     Returns:
         {'douyin': N, ..., 'jmcomic': N, 'easycopy': N, 'ehentai': N,
@@ -721,10 +722,9 @@ def get_module_file_counts() -> dict:
             counts['ehentai'] = _count_files(eh) if eh else 0
         except Exception:
             counts['ehentai'] = 0
-        # 音乐下载目录
+        # 音乐下载目录（不再读配置键，直接问 CFG 的派生属性）
         try:
-            music_dir = CFG.get('music_download_path', '')
-            counts['music'] = _count_files(music_dir) if music_dir else 0
+            counts['music'] = _count_files(CFG.music_download_dir)
         except Exception:
             counts['music'] = 0
         counts['total'] = sum(counts.values())

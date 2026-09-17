@@ -55,12 +55,21 @@ DOWNLOAD_ROOT_CACHE_DIRS = (
     ('.thumbs', 'thumbs'),
 )
 
+# 音乐目录的旧位置（相对程序根 / 用户数据目录）。
+# 历史上音乐缓存与下载**各有独立配置键**，但默认值都指向同一个 music/：
+#   · 源码模式   <项目根>/music
+#   · 冻结模式   %APPDATA%\OGC-OpenGenericClient\music
+# 现在两者都从 download_root 派生（见 core.config 的 music_*_dir），
+# 启动时把旧目录里的歌搬过去，用户不会"下载的音乐凭空消失"。
+LEGACY_MUSIC_DIRS = ('music',)
+
 # 离线索引的平台前缀
 OFFLINE_INDEX_PLATFORMS = ('easycopy', 'jmcomic', 'ehentai', 'ogc')
 
 # 迁移完成标记：避免每次启动都做一遍全量 os.walk 检查（失败则下次重试）
 _STATE_FILE = 'storage_migration.json'
-_STATE_VERSION = 2
+# v3：新增「旧音乐目录 → {下载根}/music-download」这一步
+_STATE_VERSION = 3
 
 
 def _logger():
@@ -274,6 +283,77 @@ def _cleanup_empty_legacy_dirs(cfg):
         _prune_empty_dirs(os.path.join(str(cfg.data), name))
 
 
+def _migrate_music_dirs(cfg) -> int:
+    """把旧音乐目录里的文件搬进**由下载根目录派生**的新位置。
+
+    背景：音乐过去有 ``music_cache_path`` / ``music_download_path`` 两个独立配置键，
+    默认都指向同一个 ``music/``（源码模式在项目根，冻结模式在 %APPDATA%）。
+    现在设置里只剩一个「下载目录」，两个键不再被读取 —— 但用户可能已经在里面
+    存了歌，不能就这么丢下：
+
+        {下载根}/music-download/      ← 旧 music/ 里的内容（下载的歌）
+        {下载根}/.cache/music/        ← 显式配置过的 music_cache_path
+
+    规则：
+      * 两个旧键指向**不同**目录时各归各位；
+      * 指向同一个目录（历史默认）时按"下载的音乐"处理，搬进 music-download；
+      * 已经是新位置就跳过（幂等）；
+      * 同名文件用 _merge_move_dir 的规则：同大小视为重复→删源，不同大小→保留源。
+
+    返回搬移的文件数。
+    """
+    moved = 0
+    try:
+        new_cache = os.path.normcase(os.path.abspath(cfg.music_cache_dir))
+        new_down = os.path.normcase(os.path.abspath(cfg.music_download_dir))
+    except Exception:
+        return 0
+
+    def _move(src: str, dst: str, label: str):
+        nonlocal moved
+        if not src or not os.path.isdir(src):
+            return
+        try:
+            s = os.path.normcase(os.path.abspath(src))
+            d = os.path.normcase(os.path.abspath(dst))
+        except Exception:
+            return
+        # 源就在新位置里（或源=目标）→ 没什么可搬的
+        if s == d or s in (new_cache, new_down):
+            return
+        n, size, dedup, conflict = _merge_move_dir(src, dst)
+        if n or dedup:
+            moved += n
+            _log(f"音乐{label}迁移 {src} -> {dst}"
+                 f"（搬移 {n} 个, 去重 {dedup} 个, 冲突保留 {conflict} 个, "
+                 f"{size / 1048576:.1f} MB）")
+
+    cfg_dict = getattr(cfg, 'cfg', None) or {}
+    old_cache = str(cfg_dict.get('music_cache_path', '') or '')
+    old_down = str(cfg_dict.get('music_download_path', '') or '')
+
+    try:
+        different = bool(old_cache) and (
+            not old_down or os.path.normcase(os.path.abspath(old_cache)) !=
+            os.path.normcase(os.path.abspath(old_down)))
+    except Exception:
+        different = False
+
+    # ① 用户显式配过、且两个键指向不同目录 → 各归各位
+    if different:
+        _move(old_cache, cfg.music_cache_dir, '缓存')
+    if old_down:
+        _move(old_down, cfg.music_download_dir, '下载')
+
+    # ② 历史默认目录（两键相同 / 从未配置）：按下载的音乐处理
+    for base in (getattr(cfg, 'root', None), getattr(cfg, 'data', None)):
+        if not base:
+            continue
+        for name in LEGACY_MUSIC_DIRS:
+            _move(os.path.join(str(base), name), cfg.music_download_dir, '旧目录')
+    return moved
+
+
 def migrate(force: bool = False) -> dict:
     """执行迁移。幂等；返回统计信息（供日志/测试断言）。
 
@@ -290,7 +370,7 @@ def migrate(force: bool = False) -> dict:
 
     started = time.monotonic()
     stats = {'cache_dirs': {}, 'offline_indexes': 0, 'thumb_index_rewritten': 0,
-             'skipped': False}
+             'music_moved': 0, 'skipped': False}
 
     # 1) 缓存目录 → 下载根目录/.cache
     for src_rel, dst_rel in LEGACY_CACHE_DIRS:
@@ -339,6 +419,12 @@ def migrate(force: bool = False) -> dict:
     except Exception as e:
         _log(f"离线索引迁移失败: {e}", 'error')
 
+    # 3) 旧音乐目录 → 由下载根目录派生的新位置（音乐不再单独配置目录）
+    try:
+        stats['music_moved'] = _migrate_music_dirs(cfg)
+    except Exception as e:
+        _log(f"音乐目录迁移失败: {e}", 'error')
+
     _cleanup_empty_legacy_dirs(cfg)
 
     elapsed = time.monotonic() - started
@@ -353,9 +439,11 @@ def migrate(force: bool = False) -> dict:
         pass
 
     moved_total = sum(stats['cache_dirs'].values())
-    if moved_total or stats['offline_indexes'] or stats['thumb_index_rewritten']:
+    if moved_total or stats['offline_indexes'] or stats['thumb_index_rewritten'] \
+            or stats.get('music_moved'):
         _log(f"存储迁移完成：搬移 {moved_total} 个缓存文件、"
              f"{stats['offline_indexes']} 个离线索引、"
+             f"{stats.get('music_moved', 0)} 个音乐文件、"
              f"重写 {stats['thumb_index_rewritten']} 条缩略图索引，"
              f"耗时 {elapsed:.2f}s")
     return stats
